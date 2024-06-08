@@ -1,0 +1,10 @@
+{
+  "imports": {
+    "hono": "jsr:@hono/hono",
+    "dotenv": "jsr:@std/dotenv",
+    "crypto": "jsr:@std/crypto/crypto"
+  },
+  "tasks": {
+    "start": "deno serve -A --port 8787 api/index.ts"
+  }
+}
