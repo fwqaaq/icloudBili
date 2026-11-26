@@ -1,0 +1,14 @@
+# Bilibili 登录 Cookie 中的 SESSDATA（可选，配置后部分视频支持 1080P 单流 MP4）
+SESSION=
+
+# 可选接口访问令牌（配置后下载/解析请求需附带 ?token= 或 Authorization: Bearer <token>）
+API_TOKEN=
+
+# 可选网页端更新管理口令（配置后可在网页「管理更新」中直接编辑保存 shortcut.json）
+ADMIN_TOKEN=
+
+# 可选对外访问基地址（反向代理场景下覆盖返回的 /api/proxy 链接域名，如 https://nas.wzszz.top:8443）
+PUBLIC_BASE_URL=
+
+# Docker 宿主机映射端口（默认 8787，端口冲突时可改为 8686）
+HOST_PORT=8787

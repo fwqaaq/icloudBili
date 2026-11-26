@@ -1,0 +1,35 @@
+{
+  "name": "bilibili 视频下载",
+  "badgePrefix": "新版本",
+  "version": "2.0.1",
+  "build": 3,
+  "updatedAt": "2026-11-27",
+  "subtitle": "分享链接一键解析，服务端代理绕过防盗链直存相册",
+  "icloudUrl": "https://www.icloud.com/shortcuts/0069853090354b429da8677b1681ec39",
+  "highlights": [
+    {
+      "title": "代理防盗链",
+      "subtitle": "免 Referer 直下",
+      "badge": "NEW",
+      "tone": "pink"
+    },
+    {
+      "title": "全格式解析",
+      "subtitle": "分享文案 / av / 分P",
+      "badge": "NEW",
+      "tone": "blue"
+    },
+    {
+      "title": "NAS 加速",
+      "subtitle": "稳定直连不拦截",
+      "badge": "",
+      "tone": "amber"
+    }
+  ],
+  "notes": [
+    "修复 iPhone B 站 App 系统分享、剪贴板 b23.tv 短链解析失败及报错正文丢失问题",
+    "新增快捷指令专用 ?format=json 响应模式，精准展示失败原因与提取链接",
+    "兼容移动端 .html 路径、HTML 跳转页与多种输入格式"
+  ],
+  "helpGuideUrl": ""
+}

@@ -1,0 +1,25 @@
+{
+  "name": "bdownloader",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "dev:node": "node scripts/serve-node.ts",
+    "dev:deno": "deno run -A scripts/serve-deno.ts",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts",
+    "shortcut:build": "cherri shortcuts/bilibili.cherri -s=anyone -o=shortcuts/bilibili-downloader.shortcut"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.11",
+    "hono": "^4.11.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261123.1",
+    "@types/node": "^26.6.11",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.0.0"
+  }
+}

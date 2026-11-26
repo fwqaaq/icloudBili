@@ -1,5 +1,6 @@
 # dev
 .vercel/
+.wrangler/
 .yarn/
 !.yarn/releases
 .vscode/*
@@ -9,13 +10,15 @@
 .idea/usage.statistics.xml
 .idea/shelf
 deno.lock
+dist/
 
 # deps
 node_modules/
 
-# env
+# env & secrets
 .env
 .env.production
+.dev.vars
 
 # logs
 logs/
@@ -26,6 +29,11 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# misc
+# media & misc
+*.mp4
 .DS_Store
-.vercel
+
+# Cherri compiler intermediate artifacts
+*_processed.cherri
+shortcuts/*.plist
+shortcuts/*_unsigned.shortcut

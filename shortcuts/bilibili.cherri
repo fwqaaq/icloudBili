@@ -1,0 +1,144 @@
+#define name bilibili 视频下载
+#define color pink
+#define glyph downloadArrow
+#define inputs url, text, richtext, webpage, article
+#define from sharesheet
+
+#include 'actions/web'
+#include 'actions/sharing'
+#include 'actions/photos'
+#include 'actions/text'
+
+const currentVersion = "2.0.1"
+const currentBuild = 3
+const baseUrl = "http://nas.wzszz.top:8787"
+
+// 1. 检查服务端是否有新版本
+const updateRes = downloadURL("{baseUrl}/api/shortcut")
+@updateText = "{updateRes}"
+if @updateText contains "version" {
+    const updateDict = getDictionary(updateRes)
+    const remoteVersionVal = getValue(updateDict, "version")
+    const remoteBuildVal = getValue(updateDict, "build")
+    const changelogVal = getValue(updateDict, "changelog")
+    const updatePageVal = getValue(updateDict, "updatePageUrl")
+
+    @remoteVersion = "{remoteVersionVal}"
+    const remoteBuild = getNumbers(remoteBuildVal)
+    @changelog = "{changelogVal}"
+    const changelogLen = count(@changelog, "Characters")
+    if changelogLen == 0 {
+        @changelog = "检测到新版本，点击确认前往更新页面。"
+    }
+    @updatePage = "{updatePageVal}"
+    const updatePageLen = count(@updatePage, "Characters")
+    if updatePageLen == 0 {
+        @updatePage = "{baseUrl}/"
+    }
+
+    if remoteBuild > currentBuild {
+        confirm(@changelog, "发现新版本 v{@remoteVersion}")
+        openURL(@updatePage)
+        stop()
+    } else {
+        const remoteVerLen = count(@remoteVersion, "Characters")
+        if remoteVerLen > 0 {
+            if @remoteVersion != currentVersion {
+                confirm(@changelog, "发现新版本 v{@remoteVersion}")
+                openURL(@updatePage)
+                stop()
+            }
+        }
+    }
+}
+
+// 2. 获取视频链接（共享表单 -> 剪贴板 -> 手动输入）
+@rawInput: text
+@found = 0
+if ShortcutInput {
+    const shareUrls = getURLs(ShortcutInput)
+    for su in shareUrls {
+        if @found == 0 {
+            @suText = "{su}"
+            if @suText contains "b23.tv" || @suText contains "bilibili" || @suText contains "bili2233" {
+                @rawInput = @suText
+                @found = 1
+            }
+        }
+    }
+    if @found == 0 {
+        @shareText = "{ShortcutInput}"
+        if @shareText contains "b23.tv" || @shareText contains "bilibili.com" || @shareText contains "bili2233.cn" || @shareText contains "BV" || @shareText contains "av" {
+            @rawInput = @shareText
+            @found = 1
+        }
+    }
+}
+
+if @found == 0 {
+    const clip = getClipboard()
+    @clipText = "{clip}"
+    const clipUrls = getURLs(@clipText)
+    for cu in clipUrls {
+        if @found == 0 {
+            @cuText = "{cu}"
+            if @cuText contains "b23.tv" || @cuText contains "bilibili" || @cuText contains "bili2233" {
+                @rawInput = @cuText
+                @found = 1
+            }
+        }
+    }
+    if @found == 0 {
+        if @clipText contains "bilibili" || @clipText contains "b23.tv" || @clipText contains "bili2233" || @clipText contains "BV" || @clipText contains "av" {
+            @rawInput = @clipText
+            @found = 1
+        }
+    }
+}
+
+if @found == 0 {
+    const manual = prompt("请输入 B 站视频链接、分享文案或 BV 号")
+    @rawInput = "{manual}"
+    const manualLen = count(@rawInput, "Characters")
+    if manualLen > 0 {
+        @found = 1
+    }
+}
+
+if @found == 0 {
+    alert("未提供 B 站视频链接或 BV 号", "无法下载")
+    stop()
+}
+
+// 3. 对保留字符完整转义后请求 JSON 接口，下载视频并保存到相册
+const enc1 = urlEncode(@rawInput)
+const enc2 = replaceText("&", "%26", enc1)
+const enc3 = replaceText("?", "%3F", enc2)
+const enc4 = replaceText("=", "%3D", enc3)
+const enc5 = replaceText("#", "%23", enc4)
+const encoded = replaceText("+", "%2B", enc5)
+
+const apiRes = downloadURL("{baseUrl}/api/download?bilibili={encoded}&format=json")
+@apiText = "{apiRes}"
+@proxyUrl: text
+@errMsg: text
+
+if @apiText contains "proxyUrl" || @apiText contains "error" {
+    const apiDict = getDictionary(apiRes)
+    const proxyVal = getValue(apiDict, "proxyUrl")
+    const errVal = getValue(apiDict, "error")
+    @proxyUrl = "{proxyVal}"
+    @errMsg = "{errVal}"
+}
+
+if @proxyUrl beginsWith "http" {
+    const video = downloadURL(@proxyUrl)
+    savePhoto(video)
+    showNotification("视频已保存到系统相册", "bilibili 视频下载")
+} else {
+    const errLen = count(@errMsg, "Characters")
+    if errLen == 0 {
+        @errMsg = "未能从服务端获取有效解析结果（输入：{@rawInput}）"
+    }
+    alert(@errMsg, "解析失败")
+}
