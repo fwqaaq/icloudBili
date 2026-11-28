@@ -8,11 +8,26 @@
 #include 'actions/sharing'
 #include 'actions/photos'
 #include 'actions/documents'
+#include 'actions/device'
+#include 'actions/math'
 #include 'actions/text'
 
-const currentVersion = "2.1.0"
-const currentBuild = 4
+const currentVersion = "3.0.0"
+const currentBuild = 5
 const baseUrl = "http://nas.wzszz.top:8787"
+
+// 0. 读取或生成当前设备的持久化唯一 ID（用于 Stripe 设备数控制）
+const devIdFile = getFile("bdownloader-device-id.txt", nil, false)
+@deviceId = "{devIdFile}"
+const devIdLen = count(@deviceId, "Characters")
+if devIdLen == 0 {
+    const r1 = randomNumber(100000, 999999)
+    const r2 = randomNumber(100000, 999999)
+    @deviceId = "ios-{r1}-{r2}"
+    saveFile("bdownloader-device-id.txt", @deviceId, true)
+}
+const devNameRaw = getDeviceDetail("Device Name")
+@deviceName = "{devNameRaw}"
 
 // 1. 检查服务端版本（强制更新）并动态获取接口基地址
 @apiBase = baseUrl
@@ -60,7 +75,51 @@ if @updateText contains "version" {
     }
 }
 
-// 2. 获取视频链接（共享表单 -> 剪贴板 -> 手动输入）
+// 2. 支持从 Stripe 成功页通过 shortcuts:// 回调自动激活授权码（支持 LICENSE: 或 ACTIVATE: 前缀）
+if ShortcutInput {
+    @incomingText = "{ShortcutInput}"
+    @activationKey: text
+    @isActivation = 0
+    if @incomingText beginsWith "LICENSE:" {
+        const stripped1 = replaceText("LICENSE:", "", @incomingText)
+        @activationKey = "{stripped1}"
+        @isActivation = 1
+    } else {
+        if @incomingText beginsWith "ACTIVATE:" {
+            const stripped2 = replaceText("ACTIVATE:", "", @incomingText)
+            @activationKey = "{stripped2}"
+            @isActivation = 1
+        }
+    }
+
+    if @isActivation == 1 {
+        const actLen = count(@activationKey, "Characters")
+        if actLen > 0 {
+            const actRes = jsonRequest("{@apiBase}/api/license/activate", "POST", {
+                "licenseKey": "{@activationKey}",
+                "instanceId": "{@deviceId}",
+                "instanceName": "{@deviceName}"
+            })
+            @actText = "{actRes}"
+            if @actText contains "\"ok\":true" || @actText contains "\"valid\":true" {
+                saveFile("bdownloader-license.txt", @activationKey, true)
+                showNotification("会员授权码已在本设备激活并保存", "bilibili 视频下载")
+            } else {
+                const actDict = getDictionary(actRes)
+                const actErrVal = getValue(actDict, "error")
+                @actErr = "{actErrVal}"
+                const actErrLen = count(@actErr, "Characters")
+                if actErrLen == 0 {
+                    @actErr = "激活失败，请检查授权码或网络连接"
+                }
+                alert(@actErr, "授权激活失败")
+            }
+            stop()
+        }
+    }
+}
+
+// 3. 获取视频链接（共享表单 -> 剪贴板 -> 手动输入）
 @rawInput: text
 @found = 0
 if ShortcutInput {
@@ -118,29 +177,37 @@ if @found == 0 {
     stop()
 }
 
-// 3. 选择清晰度（免会员版，不含大会员与 4K 档位）
+// 4. 选择清晰度（区分免费档与 Stripe 会员 4K/高帧率档）
 @selectedQn = "80"
-menu "选择清晰度（免会员版）" {
-    item "自动最高（1080P / 720P）":
+menu "选择视频清晰度" {
+    item "自动最高 · 免费（1080P / 720P）":
         @selectedQn = "80"
-    item "720P 高清（免登录）":
+    item "720P 高清 · 免费":
         @selectedQn = "64"
-    item "480P 清晰（省流量）":
+    item "480P 清晰 · 省流量":
         @selectedQn = "32"
+    item "4K 超清 · 会员":
+        @selectedQn = "120"
+    item "1080P60 高帧率 · 会员":
+        @selectedQn = "116"
+    item "1080P+ 高码率 · 会员":
+        @selectedQn = "112"
 }
 
-// 4. 对保留字符完整转义后请求 JSON 接口
-const enc1 = urlEncode(@rawInput)
-const enc2 = replaceText("&", "%26", enc1)
-const enc3 = replaceText("?", "%3F", enc2)
-const enc4 = replaceText("=", "%3D", enc3)
-const enc5 = replaceText("#", "%23", enc4)
-const encoded = replaceText("+", "%2B", enc5)
+// 5. 读取本地持久化 License Key 并通过 POST JSON 解析（无需手工转义 URL）
+const savedLicFile = getFile("bdownloader-license.txt", nil, false)
+@licenseKey = "{savedLicFile}"
 
-const apiRes = downloadURL("{@apiBase}/api/download?bilibili={encoded}&qn={@selectedQn}&format=json")
+const apiRes = jsonRequest("{@apiBase}/api/download", "POST", {
+    "bilibili": "{@rawInput}",
+    "qn": "{@selectedQn}",
+    "licenseKey": "{@licenseKey}",
+    "instanceId": "{@deviceId}"
+})
 @apiText = "{apiRes}"
 @proxyUrl: text
 @errMsg: text
+@checkoutUrl: text
 @videoTitle: text
 @fileName: text
 @qualityLabel: text
@@ -152,6 +219,7 @@ if @apiText contains "proxyUrl" || @apiText contains "error" {
     const apiDict = getDictionary(apiRes)
     const proxyVal = getValue(apiDict, "proxyUrl")
     const errVal = getValue(apiDict, "error")
+    const checkoutVal = getValue(apiDict, "checkoutUrl")
     const titleVal = getValue(apiDict, "title")
     const fileNameVal = getValue(apiDict, "fileName")
     const qualityLabelVal = getValue(apiDict, "qualityLabel")
@@ -161,6 +229,7 @@ if @apiText contains "proxyUrl" || @apiText contains "error" {
 
     @proxyUrl = "{proxyVal}"
     @errMsg = "{errVal}"
+    @checkoutUrl = "{checkoutVal}"
     @videoTitle = "{titleVal}"
     @fileName = "{fileNameVal}"
     @qualityLabel = "{qualityLabelVal}"
@@ -169,7 +238,97 @@ if @apiText contains "proxyUrl" || @apiText contains "error" {
     @explicitFlag = "{explicitVal}"
 }
 
-// 5. 多 P 视频且未显式指定 ?p= 时允许交互选集
+// 5.5 若触发 Stripe 会员付费拦截（返回 checkoutUrl），提供激活 / 购买 / 免费降级选项
+if @checkoutUrl beginsWith "http" {
+    menu "{@errMsg}" {
+        item "输入 / 更换会员授权码":
+            const inputKey = prompt("请输入会员授权码（如 BILI-XXXX-XXXX-XXXX-XXXX）")
+            @newKey = "{inputKey}"
+            const newKeyLen = count(@newKey, "Characters")
+            if newKeyLen == 0 {
+                stop()
+            }
+            const actRetryRes = jsonRequest("{@apiBase}/api/license/activate", "POST", {
+                "licenseKey": "{@newKey}",
+                "instanceId": "{@deviceId}",
+                "instanceName": "{@deviceName}"
+            })
+            @actRetryText = "{actRetryRes}"
+            if @actRetryText contains "\"ok\":true" || @actRetryText contains "\"valid\":true" {
+                @licenseKey = @newKey
+                saveFile("bdownloader-license.txt", @licenseKey, true)
+                const retryRes = jsonRequest("{@apiBase}/api/download", "POST", {
+                    "bilibili": "{@rawInput}",
+                    "qn": "{@selectedQn}",
+                    "licenseKey": "{@licenseKey}",
+                    "instanceId": "{@deviceId}"
+                })
+                @retryText = "{retryRes}"
+                if @retryText contains "proxyUrl" || @retryText contains "error" {
+                    const retryDict = getDictionary(retryRes)
+                    const rProxyVal = getValue(retryDict, "proxyUrl")
+                    const rErrVal = getValue(retryDict, "error")
+                    const rTitleVal = getValue(retryDict, "title")
+                    const rFileNameVal = getValue(retryDict, "fileName")
+                    const rQualVal = getValue(retryDict, "qualityLabel")
+                    const rPageVal = getValue(retryDict, "page")
+                    const rTotalVal = getValue(retryDict, "totalPages")
+                    const rExpVal = getValue(retryDict, "hasExplicitPage")
+
+                    @proxyUrl = "{rProxyVal}"
+                    @errMsg = "{rErrVal}"
+                    @videoTitle = "{rTitleVal}"
+                    @fileName = "{rFileNameVal}"
+                    @qualityLabel = "{rQualVal}"
+                    @currentPage = "{rPageVal}"
+                    @totalPages = "{rTotalVal}"
+                    @explicitFlag = "{rExpVal}"
+                }
+            } else {
+                const actRetryDict = getDictionary(actRetryRes)
+                const arErrVal = getValue(actRetryDict, "error")
+                @arErr = "{arErrVal}"
+                const arErrLen = count(@arErr, "Characters")
+                if arErrLen == 0 {
+                    @arErr = "授权码激活失败，请检查输入或已达设备上限"
+                }
+                alert(@arErr, "授权激活失败")
+                stop()
+            }
+        item "前往 Stripe 开通 / 续费会员":
+            openURL(@checkoutUrl)
+            stop()
+        item "改用免费最高画质（1080P / 720P）":
+            @selectedQn = "80"
+            const freeRes = jsonRequest("{@apiBase}/api/download", "POST", {
+                "bilibili": "{@rawInput}",
+                "qn": "80"
+            })
+            @freeText = "{freeRes}"
+            if @freeText contains "proxyUrl" || @freeText contains "error" {
+                const freeDict = getDictionary(freeRes)
+                const fProxyVal = getValue(freeDict, "proxyUrl")
+                const fErrVal = getValue(freeDict, "error")
+                const fTitleVal = getValue(freeDict, "title")
+                const fFileNameVal = getValue(freeDict, "fileName")
+                const fQualVal = getValue(freeDict, "qualityLabel")
+                const fPageVal = getValue(freeDict, "page")
+                const fTotalVal = getValue(freeDict, "totalPages")
+                const fExpVal = getValue(freeDict, "hasExplicitPage")
+
+                @proxyUrl = "{fProxyVal}"
+                @errMsg = "{fErrVal}"
+                @videoTitle = "{fTitleVal}"
+                @fileName = "{fFileNameVal}"
+                @qualityLabel = "{fQualVal}"
+                @currentPage = "{fPageVal}"
+                @totalPages = "{fTotalVal}"
+                @explicitFlag = "{fExpVal}"
+            }
+    }
+}
+
+// 6. 多 P 视频且未显式指定 ?p= 时允许交互选集
 if @proxyUrl beginsWith "http" {
     const totalPagesNum = getNumbers(@totalPages)
     if totalPagesNum > 1 {
@@ -184,7 +343,13 @@ if @proxyUrl beginsWith "http" {
                     const pickedPage = prompt("请输入分 P 序号（1 ~ {@totalPages}）", "Number", "1")
                     const pickedNum = getNumbers(pickedPage)
                     if pickedNum >= 1 {
-                        const pageRes = downloadURL("{@apiBase}/api/download?bilibili={encoded}&qn={@selectedQn}&p={pickedNum}&format=json")
+                        const pageRes = jsonRequest("{@apiBase}/api/download", "POST", {
+                            "bilibili": "{@rawInput}",
+                            "qn": "{@selectedQn}",
+                            "p": "{pickedNum}",
+                            "licenseKey": "{@licenseKey}",
+                            "instanceId": "{@deviceId}"
+                        })
                         @pageText = "{pageRes}"
                         if @pageText contains "proxyUrl" || @pageText contains "error" {
                             const pageDict = getDictionary(pageRes)
@@ -208,7 +373,7 @@ if @proxyUrl beginsWith "http" {
     }
 }
 
-// 6. 下载视频、按标题重命名并选择保存到相册或文件
+// 7. 下载视频（proxyUrl 已携带 HMAC 签名票据）、按标题重命名并选择保存位置
 if @proxyUrl beginsWith "http" {
     const video = downloadURL(@proxyUrl)
     const fileNameLen = count(@fileName, "Characters")

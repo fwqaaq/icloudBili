@@ -9,6 +9,11 @@ const BILIBILI_REFERER = 'https://www.bilibili.com/'
 const BILIBILI_ORIGIN = 'https://www.bilibili.com'
 
 const VALID_QN_SET = new Set(['32', '64', '74', '80', '112', '116', '120'])
+export const VIP_QN_SET = new Set(['112', '116', '120'])
+
+export function isVipQn(qn?: string): boolean {
+  return VIP_QN_SET.has(normalizeQn(qn))
+}
 
 const MIXIN_KEY_ENC_TAB = [
   46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49,
@@ -23,7 +28,7 @@ const PLAY_CACHE_TTL_MS = 5 * 60 * 1000
 const PLAY_CACHE_MAX_ENTRIES = 100
 const MAX_SHORT_LINK_HOPS = 4
 
-export type ErrorStatus = 400 | 401 | 403 | 404 | 502 | 504
+export type ErrorStatus = 400 | 401 | 402 | 403 | 404 | 501 | 502 | 504
 
 export class BiliError extends Error {
   readonly status: ErrorStatus
@@ -53,6 +58,46 @@ export type VideoInfo = {
   totalPages: number
 }
 
+export type DashMediaTrack = {
+  id: number
+  codecid: number
+  codecs: string
+  bandwidth: number
+  candidates: string[]
+}
+
+export type DashMuxInput = {
+  videoKey: string
+  cid: number
+  title: string
+  part: string
+  page: number
+  totalPages: number
+  quality: number
+  qn: string
+  video: DashMediaTrack
+  audio: DashMediaTrack | null
+}
+
+export type DashMuxOutput = {
+  stream: ReadableStream<Uint8Array> | null
+  status: 200 | 206 | 416
+  contentLength?: number
+  contentRange?: string
+}
+
+export type DashMuxer = {
+  isAvailable: () => Promise<boolean>
+  muxAndServe: (
+    input: DashMuxInput,
+    options: {
+      method: string
+      rangeHeader?: string | null
+      fetchCandidateStream: (candidates: string[]) => Promise<Response>
+    },
+  ) => Promise<DashMuxOutput>
+}
+
 export type ResolvedPlayInfo = {
   bvid: string
   aid: number
@@ -64,6 +109,10 @@ export type ResolvedPlayInfo = {
   quality: number
   qn: string
   candidates: string[]
+  dash?: {
+    video: DashMediaTrack
+    audio: DashMediaTrack | null
+  }
 }
 
 export type StreamResult = {
@@ -114,12 +163,128 @@ type SpiData = {
   b_4?: string
 }
 
+type PlayUrlDashItem = {
+  id?: number
+  baseUrl?: string
+  base_url?: string
+  backupUrl?: string[] | null
+  backup_url?: string[] | null
+  bandwidth?: number
+  codecs?: string
+  codecid?: number
+}
+
 type PlayUrlData = {
   quality?: number
   durl?: Array<{
     url?: string
     backup_url?: string[] | null
   }>
+  dash?: {
+    video?: PlayUrlDashItem[]
+    audio?: PlayUrlDashItem[]
+  }
+}
+
+function collectSafeTrackCandidates(item: PlayUrlDashItem): string[] {
+  const raw = [
+    item.baseUrl,
+    item.base_url,
+    ...(item.backupUrl ?? []),
+    ...(item.backup_url ?? []),
+  ]
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const url of raw) {
+    if (!url) continue
+    try {
+      const safe = assertSafeCdnUrl(url)
+      if (!seen.has(safe)) {
+        seen.add(safe)
+        out.push(safe)
+      }
+    } catch {
+      // Skip unsafe CDN candidates
+    }
+  }
+  return out
+}
+
+function videoCodecRank(codecid: number, targetId: number): number {
+  // iOS Photos (savePhoto) handles HEVC and AVC natively; AV1 fails on older iOS hardware.
+  // For 4K (120+), HEVC is standard on Bilibili; for <=1080P60, AVC/HEVC both work well.
+  if (targetId >= 120) {
+    if (codecid === 12) return 0
+    if (codecid === 7) return 1
+    if (codecid === 13) return 2
+    return 3
+  }
+  if (codecid === 7) return 0
+  if (codecid === 12) return 1
+  if (codecid === 13) return 2
+  return 3
+}
+
+/** Pick the highest compatible DASH video & AAC audio tracks up to targetQn while prioritizing iOS-compatible codecs. */
+export function selectBestDashTracks(
+  dash: NonNullable<PlayUrlData['dash']>,
+  targetQn: string,
+): { video: DashMediaTrack; audio: DashMediaTrack | null; quality: number } {
+  const targetId = Number(normalizeQn(targetQn))
+  const videoTracks: DashMediaTrack[] = []
+  for (const item of dash.video ?? []) {
+    if (typeof item.id !== 'number') continue
+    const candidates = collectSafeTrackCandidates(item)
+    if (candidates.length === 0) continue
+    videoTracks.push({
+      id: item.id,
+      codecid: item.codecid ?? 0,
+      codecs: item.codecs ?? '',
+      bandwidth: item.bandwidth ?? 0,
+      candidates,
+    })
+  }
+
+  if (videoTracks.length === 0) {
+    throw new BiliError(502, '未能从 Bilibili DASH 接口获取到可用的视频流地址')
+  }
+
+  const withinCap = videoTracks.filter((t) => t.id <= targetId)
+  const bestId =
+    withinCap.length > 0
+      ? Math.max(...withinCap.map((t) => t.id))
+      : Math.min(...videoTracks.map((t) => t.id))
+
+  const matchingRes = videoTracks
+    .filter((t) => t.id === bestId)
+    .sort((a, b) => {
+      const rankDiff = videoCodecRank(a.codecid, bestId) - videoCodecRank(b.codecid, bestId)
+      if (rankDiff !== 0) return rankDiff
+      return b.bandwidth - a.bandwidth
+    })
+
+  const video = matchingRes[0]
+
+  const audioTracks: DashMediaTrack[] = []
+  for (const item of dash.audio ?? []) {
+    if (typeof item.id !== 'number') continue
+    const candidates = collectSafeTrackCandidates(item)
+    if (candidates.length === 0) continue
+    audioTracks.push({
+      id: item.id,
+      codecid: item.codecid ?? 0,
+      codecs: item.codecs ?? '',
+      bandwidth: item.bandwidth ?? 0,
+      candidates,
+    })
+  }
+  audioTracks.sort((a, b) => b.id - a.id || b.bandwidth - a.bandwidth)
+
+  return {
+    video,
+    audio: audioTracks[0] ?? null,
+    quality: video.id,
+  }
 }
 
 function getBiliApiHeaders(session?: string, fingerprintCookie = ''): HeadersInit {
@@ -485,9 +650,11 @@ export type BilibiliService = {
 export function createBilibiliService(deps?: {
   fetcher?: typeof fetch
   now?: () => number
+  dashMuxer?: DashMuxer
 }): BilibiliService {
   const fetcher: typeof fetch = deps?.fetcher ?? fetch
   const now: () => number = deps?.now ?? (() => Date.now())
+  const dashMuxer = deps?.dashMuxer
 
   let wbiCache: WbiKeys | null = null
   let spiCookieCache: { cookie: string; expiresAt: number } | null = null
@@ -906,8 +1073,16 @@ export function createBilibiliService(deps?: {
     forceRefresh = false,
     prefetchedWbi?: Promise<WbiKeys>
   ): Promise<ResolvedPlayInfo> {
+    const useDash = isVipQn(qn)
+    if (useDash && (!dashMuxer || !(await dashMuxer.isAvailable()))) {
+      throw new BiliError(
+        501,
+        '当前运行环境不支持 4K / 高帧率 DASH 混流（未检测到可用 ffmpeg），请切换至 NAS Docker 节点或选择 1080P 及以下清晰度'
+      )
+    }
+
     const videoKey = videoInfo.bvid || `av${videoInfo.aid}`
-    const cacheKey = `${videoKey}:${videoInfo.cid}:${qn}:${session ? 'auth' : 'anon'}`
+    const cacheKey = `${videoKey}:${videoInfo.cid}:${qn}:${useDash ? 'dash' : 'mp4'}:${session ? 'auth' : 'anon'}`
     if (!forceRefresh) {
       const cached = playCache.get(cacheKey)
       if (cached && now() < cached.expiresAt) {
@@ -928,7 +1103,7 @@ export function createBilibiliService(deps?: {
       ...idParams,
       cid: String(videoInfo.cid),
       qn,
-      fnval: 1,
+      fnval: useDash ? 144 : 1,
       fnver: 0,
       fourk: 1,
       platform: 'pc',
@@ -998,6 +1173,28 @@ export function createBilibiliService(deps?: {
         502,
         `获取视频播放地址失败（code ${payload.code}）: ${payload.message ?? '未知错误'}`
       )
+    }
+
+    if (useDash && payload.data.dash) {
+      const selected = selectBestDashTracks(payload.data.dash, qn)
+      const resolved: ResolvedPlayInfo = {
+        bvid: videoInfo.bvid,
+        aid: videoInfo.aid,
+        cid: videoInfo.cid,
+        title: videoInfo.title,
+        part: videoInfo.part,
+        page: videoInfo.page,
+        totalPages: videoInfo.totalPages,
+        quality: selected.quality,
+        qn,
+        candidates: [],
+        dash: {
+          video: selected.video,
+          audio: selected.audio,
+        },
+      }
+      setPlayCache(cacheKey, resolved)
+      return resolved
     }
 
     const firstDurl = payload.data.durl?.[0]
@@ -1147,8 +1344,68 @@ export function createBilibiliService(deps?: {
     const videoInfo = await getVideoInfo(target, options?.session)
 
     const videoKey = videoInfo.bvid || `av${videoInfo.aid}`
-    const cacheKey = `${videoKey}:${videoInfo.cid}:${qn}:${options?.session ? 'auth' : 'anon'}`
+    const useDash = isVipQn(qn)
+    const cacheKey = `${videoKey}:${videoInfo.cid}:${qn}:${useDash ? 'dash' : 'mp4'}:${options?.session ? 'auth' : 'anon'}`
     const hadCached = playCache.has(cacheKey)
+
+    const fetchTrackStream = async (candidates: string[]): Promise<Response> => {
+      const res = await tryCdnCandidates(candidates, 'GET')
+      if (!res) {
+        throw new BiliError(
+          502,
+          '所有 Bilibili CDN 节点均返回拦截或不可用（可能受当前节点 IP 风控限制）'
+        )
+      }
+      return res
+    }
+
+    const resolveUpstream = async (info: ResolvedPlayInfo): Promise<Response | null> => {
+      if (info.dash) {
+        if (!dashMuxer || !(await dashMuxer.isAvailable())) {
+          throw new BiliError(
+            501,
+            '当前运行环境不支持 4K / 高帧率 DASH 混流（未检测到可用 ffmpeg）'
+          )
+        }
+        const muxed = await dashMuxer.muxAndServe(
+          {
+            videoKey,
+            cid: videoInfo.cid,
+            title: videoInfo.title,
+            part: videoInfo.part,
+            page: videoInfo.page,
+            totalPages: videoInfo.totalPages,
+            quality: info.quality,
+            qn: info.qn,
+            video: info.dash.video,
+            audio: info.dash.audio,
+          },
+          {
+            method,
+            rangeHeader: options?.rangeHeader,
+            fetchCandidateStream: fetchTrackStream,
+          }
+        )
+        const headers = new Headers({
+          'Content-Type': 'video/mp4',
+          'Accept-Ranges': 'bytes',
+        })
+        if (muxed.contentLength !== undefined) {
+          headers.set('Content-Length', String(muxed.contentLength))
+        }
+        if (muxed.contentRange) {
+          headers.set('Content-Range', muxed.contentRange)
+        }
+        return new Response(muxed.stream, { status: muxed.status, headers })
+      }
+
+      return tryCdnCandidates(
+        info.candidates,
+        method,
+        options?.rangeHeader,
+        options?.ifRangeHeader
+      )
+    }
 
     let info = await fetchPlayCandidates(
       videoInfo,
@@ -1157,21 +1414,19 @@ export function createBilibiliService(deps?: {
       false,
       wbiPromise
     )
-    let upstream = await tryCdnCandidates(
-      info.candidates,
-      method,
-      options?.rangeHeader,
-      options?.ifRangeHeader
-    )
+
+    let upstream: Response | null = null
+    try {
+      upstream = await resolveUpstream(info)
+    } catch (err) {
+      if (!hadCached || !(err instanceof BiliError) || err.status !== 502) {
+        throw err
+      }
+    }
 
     if (!upstream && hadCached) {
       info = await fetchPlayCandidates(videoInfo, qn, options?.session, true)
-      upstream = await tryCdnCandidates(
-        info.candidates,
-        method,
-        options?.rangeHeader,
-        options?.ifRangeHeader
-      )
+      upstream = await resolveUpstream(info)
     }
 
     if (!upstream) {

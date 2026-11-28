@@ -35,24 +35,26 @@
 | --- | --- |
 | **全格式输入解析** | 自动从 B 站 App 分享文案提取地址，兼容标准网页链接（含 `.html` 后缀）、`b23.tv` 与 `bili2233.cn` 短链重定向、`bilibili://` Scheme、裸 `BV` 号、裸 `av` 号及 `?p=` 分 P 参数。 |
 | **WBI 签名与风控降级** | 自动获取 `spi`（`buvid3` / `buvid4`）指纹与 WBI（Web Interface，网页接口签名）密钥并缓存。遇上游风控拦截时，依次降级 `/x/player/pagelist` 与普通播放接口。 |
+| **4K DASH 无损混流** | Node.js / Deno 运行时（如 NAS Docker）通过注入 `DashMuxer` 调用 `ffmpeg` 自动拉取 `1080P+`、`1080P60`、`4K` 分离流并无损合成为标准 MP4（优先 `HEVC` / `AVC` 编码以兼容 iPhone 相册）。 |
 | **防盗链流式代理** | `/api/proxy` 附带 `Referer: https://www.bilibili.com/` 转发视频流，依次尝试主链接与 `backup_url` 备用 CDN（Content Delivery Network，内容分发网络）节点，支持 `Range` / `206` 断点续传与 `HEAD` 请求。 |
+| **Stripe 付费与防绕过** | 内置通用 [StripeGuard](src/stripe-guard.ts) 模块对接 `stripe-v2` 授权中心（校验套餐权限与设备激活数），并通过 WebCrypto HMAC-SHA256 限时票据保护 `/api/proxy` 不被绕过白嫖。 |
 | **SSRF 与访问鉴权** | 禁止代理任意外部 `url=` 参数，过滤内网主机与 IP 字面量，防范 SSRF（Server-Side Request Forgery，服务端请求伪造）。可选配置 `API_TOKEN` 与 `ADMIN_TOKEN`。 |
-| **快捷指令生态闭环** | 首页 `GET /` 提供安装引导、覆盖替换提示、网页测试与管理弹窗；仓库内附 [shortcuts/bilibili.cherri](shortcuts/bilibili.cherri) 源码，支持启动自动检查更新。 |
+| **快捷指令生态闭环** | 首页 `GET /` 提供安装引导、覆盖替换提示、网页测试与管理弹窗；仓库内附 [shortcuts/bilibili.cherri](shortcuts/bilibili.cherri) 源码，支持强制更新与 Stripe 回调自动激活。 |
 
 ### 请求与代理流程
 
 ```mermaid
 flowchart LR
     Client["客户端 / Apple 快捷指令"] -->|"分享文案 · 短链 · BV / av"| Router["Hono 服务路由"]
-    Router -->|"1. 提取输入与跟踪跳转"| Resolver["链接解析（b23.tv · bilibili://）"]
-    Resolver -->|"2. 获取元数据与 WBI 签名"| BiliAPI["Bilibili API（含 pagelist 降级）"]
+    Router -->|"1. 提取输入与会员鉴权"| Guard["StripeGuard（VIP 档位验码 + HMAC 票据）"]
+    Guard -->|"2. 链接还原与 WBI 签名"| BiliAPI["Bilibili API（单流 MP4 / 4K DASH）"]
     BiliAPI -->|"3. 校验上游域名"| Security["SSRF 安全过滤"]
-    Security -->|"4. 附带 Referer 转发"| Proxy["流式代理（主备回退 · Range 206）"]
-    Proxy -->|"代理 URL / JSON / MP4 流"| Client
+    Security -->|"4. 代理转发或 ffmpeg 混流"| Proxy["流式输出（主备回退 · Range 206）"]
+    Proxy -->|"签名 URL / JSON / MP4 流"| Client
 ```
 
 > [!WARNING]
-> **节点风控与清晰度限制**：Cloudflare Workers 位于海外边缘节点，部分 Bilibili 接口或 CDN 节点可能因机房 IP 返回 `403`、`412` 或 `567` 拦截；此外 Workers 环境无法运行 `ffmpeg`，仅支持单流 MP4 输出（未登录通常最高 `720P`，配置 `SESSION` 后部分视频支持 `1080P`）。若频繁遇到节点拦截，推荐改用下方的 Docker Compose 或本地 Node.js 方式部署在国内网络环境中。
+> **节点风控与运行环境差异**：Cloudflare Workers 位于海外边缘节点，部分 Bilibili 接口或 CDN 节点可能因机房 IP 返回 `403`、`412` 或 `567` 拦截；此外 Workers 无法运行 `ffmpeg`，仅支持单流 MP4 输出（未登录最高 `720P`，配置普通 `SESSION` 最高 `1080P`）。若需要 **4K / 1080P60** 下载或稳定直连，请使用含 `ffmpeg` 的 Docker Compose / NAS 方式部署。
 
 ---
 
@@ -156,10 +158,16 @@ pnpm test
 
 | 变量名 | 默认值 | 说明 |
 | --- | --- | --- |
-| `SESSION` | 空 | Bilibili 登录 Cookie 中的 `SESSDATA` 值，配置后部分视频可解析 `1080P` 单流 MP4。 |
+| `SESSION` | 空 | Bilibili 登录 Cookie 中的 `SESSDATA` 值（普通账号支持 `1080P` 单流，大会员账号配合 NAS `ffmpeg` 支持 `4K` DASH）。 |
 | `API_TOKEN` | 空 | 接口访问令牌。配置后除 `/api/health` 与 `/api/shortcut` 外，请求均需携带 `?token=` 或 `Authorization: Bearer <token>`。 |
 | `ADMIN_TOKEN` | 空 | 网页端「管理更新」与 `PUT /api/shortcut` 的管理口令；未配置时若存在 `API_TOKEN` 则回退使用 `API_TOKEN`。 |
 | `PUBLIC_BASE_URL` | 请求来源 Origin | 反向代理场景下的对外访问基地址（如 `https://your-domain.example`），用于拼接返回的代理链接。 |
+| `FFMPEG_PATH` | `ffmpeg` | `ffmpeg` 可执行文件路径（标准 Docker 镜像已内置；NAS 静态挂载场景可保持默认或指定自定义路径）。 |
+| `PROXY_SIGNING_SECRET` | 随机派生 / 回退口令 | HMAC-SHA256 代理票据签名密钥，用于绑定 `/api/proxy` 清晰度与时效，建议在多实例环境下显式设置。 |
+| `STRIPE_LICENSE_URL` | 空 | `stripe-v2` 授权中心基地址（如 `https://stripe.fwqaaq.workers.dev`），与 `STRIPE_PRODUCT_ID` 同时配置即开启会员挡板。 |
+| `STRIPE_PRODUCT_ID` | 空 | 在 `stripe-v2` 后台注册的产品标识（如 `bdownloader`）。 |
+| `STRIPE_VIP_ENTITLEMENT` | 空 | 校验高画质所需套餐权益标识（如 `4k`；留空则仅校验有效且未过期的激活码）。 |
+| `STRIPE_DEFAULT_PLAN` | 空 | 可选默认结账套餐 Slug（留空时引导至产品落地页 `/p/:productId` 自选套餐）。 |
 | `HOST_PORT` | `8787` | Docker Compose 宿主机映射端口。 |
 | `PORT` / `HOST` | `8787` / `0.0.0.0` | Node.js 默认同时读取 `PORT` 与 `HOST`；Deno 仅读取 `PORT`（默认 `8787`）。 |
 
@@ -186,13 +194,15 @@ pnpm test
 | 方法与路径 | 说明 | 核心参数 / 请求头 |
 | --- | --- | --- |
 | `GET /` | Apple 快捷指令安装与覆盖引导页（含折叠下载测试与管理弹窗） | — |
-| `GET /api/download` | 默认返回纯文本代理链接；传 `format=json` 返回 JSON；传 `raw=file` 直接返回 MP4 文件流 | `bilibili`（必填）、`qn`、`p`、`format`、`raw`、`token` |
-| `POST /api/download` | 接收 JSON 请求体并返回解析结果（默认返回 JSON，传 `format: "text"` 返回纯文本） | JSON Body（`bilibili`、`qn`、`p`、`format`） |
-| `GET /api/proxy` | 流式代理下载 MP4（支持 `Range` 断点续传与 `HEAD` 请求） | `bilibili`（必填）、`qn`、`p`、`inline=1`、`token` |
+| `GET /api/download` | 默认返回纯文本代理链接；传 `format=json` 返回 JSON；传 `raw=file` 直接返回 MP4 文件流 | `bilibili`（必填）、`qn`、`p`、`format`、`raw`、`licenseKey`、`instanceId`、`token` |
+| `POST /api/download` | 接收 JSON 请求体并返回解析结果（默认返回 JSON，传 `format: "text"` 返回纯文本） | JSON Body（`bilibili`、`qn`、`p`、`format`、`licenseKey`、`instanceId`） |
+| `GET /api/proxy` | 流式代理下载 MP4（支持 `Range` 断点续传、DASH 混流与 `HEAD` 请求） | `bilibili`（必填）、`qn`、`p`、`inline=1`、`exp`、`sig`、`licenseKey`、`token` |
+| `POST /api/license/activate` | 激活会员授权码并绑定当前设备（透传 `stripe-v2` `/v1/licenses/activate`） | JSON Body（`licenseKey`、`instanceId`、`instanceName`） |
+| `POST /api/license/verify` | 校验授权码与权益状态（透传 `stripe-v2` `/v1/licenses/verify`） | JSON Body（`licenseKey`、`instanceId`） |
 | `GET /api/getreal` | 提取分享文案中的地址并还原 `b23.tv` / `bili2233.cn` 短链 | `bilibili`（必填）、`token` |
-| `GET /api/shortcut` | 供 Apple 快捷指令启动时检查版本的配置 JSON（无需 `API_TOKEN`） | — |
+| `GET /api/shortcut` | 供 Apple 快捷指令检查版本、动态地址与 `capabilities` 的 JSON（无需 `API_TOKEN`） | — |
 | `PUT /api/shortcut` | 热更新 [shortcut.json](shortcut.json)（仅 Node.js / Deno 运行时可用） | JSON Body、`X-Admin-Token` |
-| `GET /api/health` | 服务健康检查与可用端点清单 JSON（无需 `API_TOKEN`） | — |
+| `GET /api/health` | 服务健康检查、能力标志（`dash4k` / `stripePaywall`）与端点清单 JSON | — |
 
 > [!NOTE]
 > 当环境变量中设置了 `API_TOKEN` 时，除 `/api/health` 与 `/api/shortcut` 外的所有 `/api/*` 接口均需通过 `?token=<token>` 或请求头 `Authorization: Bearer <token>` 进行鉴权。
@@ -200,14 +210,16 @@ pnpm test
 <details>
 <summary>展开查看清晰度代码（qn）与请求响应示例</summary>
 
-**清晰度参数 `qn` 对照表**（默认 `80`，传入未定义值时自动回退至 `80`；界面与快捷指令默认仅提供免会员可下载的清晰度选项）：
+**清晰度参数 `qn` 对照表**（默认 `80`，传入未定义值时自动回退至 `80`；开启 Stripe 会员配置后，`112` / `116` / `120` 需授权校验，且需要含 `ffmpeg` 的运行环境完成 DASH 无损混流）：
 
-| `qn` 值 | 清晰度说明 | 备注 |
+| `qn` 值 | 清晰度说明 | 权限与运行要求 |
 | --- | --- | --- |
-| `80` | 自动最高 · 1080P 高清（默认） | 服务端配置普通免费账号 `SESSION` 时获取 `1080P`，未登录自动降级为 `720P` |
-| `64` | 720P 高清 | 未登录状态常见最高单流清晰度 |
-| `32` | 480P 清晰 | 体积更小，适合快速下载 |
-| `74` / `112` / `116` / `120` | 720P60 / 1080P+ / 1080P60 / 4K | 服务端保留透传兼容，界面不展示；实际可用性取决于账号权益与单流支持情况 |
+| `80` | 自动最高 · 1080P 高清（默认） | 免费单流 MP4（配置普通 `SESSION` 可达 `1080P`，未登录自动降级 `720P`） |
+| `64` | 720P 高清 | 免费单流 MP4，免登录即可获取 |
+| `32` | 480P 清晰 | 免费单流 MP4，体积更小 |
+| `112` | 1080P+ 高码率 | 会员 DASH 混流（需服务端大会员 `SESSION` + `ffmpeg` + Stripe 授权） |
+| `116` | 1080P60 高帧率 | 会员 DASH 混流（需服务端大会员 `SESSION` + `ffmpeg` + Stripe 授权） |
+| `120` | 4K 超清 | 会员 DASH 混流（优先选择 `HEVC` / `AVC` 兼容相册，需大会员 `SESSION` + `ffmpeg` + Stripe 授权） |
 
 **`GET /api/download?format=json` 或 `POST /api/download` 响应示例**：
 
@@ -255,8 +267,8 @@ curl -L -o video_p2.mp4 \
 仓库在 [shortcuts/bilibili.cherri](shortcuts/bilibili.cherri) 提供了完整的 Apple 快捷指令源码，并已预编译签名为 [shortcuts/bilibili-downloader.shortcut](shortcuts/bilibili-downloader.shortcut)。快捷指令内置以下逻辑：
 
 1. **启动强制检查更新与动态地址同步**：请求 `GET /api/shortcut`，同时比对 `build > currentBuild` 与 `version != currentVersion`，并读取返回的 `apiBaseUrl`；若发现服务端版本更高则弹窗跳转更新引导页并停止运行。
-2. **多渠道输入识别与免会员清晰度选择**：依次读取共享表单 `ShortcutInput`、剪贴板内容或手动输入，随后弹出免会员清晰度菜单（自动最高 `1080P / 720P`、`720P`、`480P`）。
-3. **多 P 选集、标题命名与双保存位置**：遇到多 P 视频且链接未指定 `?p=` 时支持交互选集；下载后以视频标题重命名，并可选择保存至系统相册或「文件」App，同时在完成通知中展示标题与实际清晰度。
+2. **Stripe 支付回调激活与本地持久化**：支持从 Stripe 成功页通过 `shortcuts://` 传入 `LICENSE:<KEY>`（或 `ACTIVATE:<KEY>`），自动携带持久化的设备 ID 调用 `POST /api/license/activate` 并将授权码保存在本地 `bdownloader-license.txt`。
+3. **分级清晰度、付费引导与双保存位置**：支持免费档（`1080P / 720P / 480P`）与会员档（`4K / 1080P60 / 1080P+`）；遇付费拦截可直接在快捷指令内输入授权码、跳转 Stripe 结账或改用免费画质，支持多 P 选集、视频标题命名以及相册 / 「文件」App 双保存。
 
 修改 `shortcuts/bilibili.cherri` 中的 `currentVersion`、`currentBuild` 或 `baseUrl`（替换为自己的服务端域名）后，可通过已安装的 `cherri` CLI（Command-Line Interface，命令行工具）重新编译并签名：
 

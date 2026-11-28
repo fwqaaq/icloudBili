@@ -1,4 +1,4 @@
-# Bilibili 登录 Cookie 中的 SESSDATA（可选，配置后部分视频支持 1080P 单流 MP4）
+# Bilibili 登录 Cookie 中的 SESSDATA（可选，普通账号支持 1080P 单流，大会员账号配合 NAS ffmpeg 支持 4K DASH）
 SESSION=
 
 # 可选接口访问令牌（配置后下载/解析请求需附带 ?token= 或 Authorization: Bearer <token>）
@@ -7,8 +7,22 @@ API_TOKEN=
 # 可选网页端更新管理口令（配置后可在网页「管理更新」中直接编辑保存 shortcut.json）
 ADMIN_TOKEN=
 
-# 可选对外访问基地址（反向代理场景下覆盖返回的 /api/proxy 链接域名，如 https://nas.wzszz.top:8443）
+# 可选对外访问基地址（反向代理场景下覆盖返回的 /api/proxy 链接域名，如 https://your-domain.example）
 PUBLIC_BASE_URL=
 
 # Docker 宿主机映射端口（默认 8787，端口冲突时可改为 8686）
 HOST_PORT=8787
+
+# 可选 ffmpeg 可执行文件路径（默认 ffmpeg；NAS 静态二进制场景可留空并挂载至 /usr/local/bin/ffmpeg）
+FFMPEG_PATH=
+
+# 可选代理签名密钥（用于防止未授权用户绕过 /api/download 直接构造 /api/proxy 下载 4K）
+PROXY_SIGNING_SECRET=
+
+# 可选 Stripe v2 授权中心配置（留空则关闭会员挡板；配置后 1080P+ / 1080P60 / 4K 将校验会员 License）
+STRIPE_LICENSE_URL=
+STRIPE_PRODUCT_ID=
+STRIPE_VIP_ENTITLEMENT=4k
+STRIPE_DEFAULT_PLAN=
+# 需要会员校验的清晰度列表（默认 112,116,120）
+# LICENSE_PRO_QNS=112,116,120

@@ -1,3 +1,4 @@
+import { createNodeDashMuxer } from '../src/dash-muxer.ts'
 import { createApp } from '../src/index.ts'
 import {
   DEFAULT_SHORTCUT_CONFIG,
@@ -51,9 +52,12 @@ const shortcutStore: ShortcutStore = {
   },
 }
 
-const app = createApp({ shortcutStore })
-const port = Number(Deno.env.get('PORT') ?? '8787')
 const localEnv = loadLocalEnv()
+const dashMuxer = createNodeDashMuxer({
+  ffmpegPath: localEnv.FFMPEG_PATH,
+})
+const app = createApp({ shortcutStore, dashMuxer })
+const port = Number(Deno.env.get('PORT') ?? '8787')
 
 Deno.serve(
   {

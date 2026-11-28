@@ -177,6 +177,7 @@ EXCLUDES=(
   ".deploy.*.env"
   "docker-compose.override.yml"
   "package-lock.json"
+  "bin/"
   "*.mp4"
   "*.log"
   ".DS_Store"

@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, it } from 'node:test'
+import { Hono } from 'hono'
 import {
   assertSafeCdnUrl,
   encWbi,
   extractRawLinkOrId,
   normalizeQn,
   parseVideoTarget,
+  selectBestDashTracks,
 } from '../src/bilibili.ts'
+import { createNodeDashMuxer, parseByteRange } from '../src/dash-muxer.ts'
 import { createApp } from '../src/index.ts'
 import { md5Hex } from '../src/md5.ts'
 import {
@@ -14,6 +20,10 @@ import {
   type ShortcutConfig,
   type ShortcutStore,
 } from '../src/shortcut.ts'
+import {
+  createStripeEntitlementMiddleware,
+  createStripeLicenseClient,
+} from '../src/stripe-guard.ts'
 import { parseDotEnv } from '../scripts/env-parser.ts'
 
 describe('md5Hex', () => {
@@ -457,15 +467,22 @@ describe('HTTP endpoints', () => {
     assert.ok(html.includes('value="80"'))
     assert.ok(html.includes('value="64"'))
     assert.ok(html.includes('value="32"'))
-    assert.equal(html.includes('value="112"'), false)
+    assert.ok(html.includes('value="112"'))
+    assert.ok(html.includes('value="116"'))
+    assert.ok(html.includes('value="120"'))
     assert.ok(html.includes('http://nas.wzszz.top:8787/api/shortcut'))
-    assert.ok(html.includes('d090f8e53b1540749c79837f99115a5c'))
+    assert.ok(html.includes('6baca692067a48ea98766d4fc81531d3'))
     assert.equal(html.includes('<script>alert(1)</script>'), false)
 
     const healthRes = await app.request('http://nas.wzszz.top:8787/api/health')
     assert.equal(healthRes.status, 200)
-    const healthJson = (await healthRes.json()) as { status: string }
+    const healthJson = (await healthRes.json()) as {
+      status: string
+      capabilities: { dash4k: boolean; stripePaywall: boolean }
+    }
     assert.equal(healthJson.status, 'ok')
+    assert.equal(healthJson.capabilities.dash4k, false)
+    assert.equal(healthJson.capabilities.stripePaywall, false)
   })
 
   it('GET/PUT /api/shortcut enforces ADMIN_TOKEN, validates payload, and hot-reloads', async () => {
@@ -487,8 +504,8 @@ describe('HTTP endpoints', () => {
       updatePageUrl: string
       changelog: string
     }
-    assert.equal(getJson.version, '2.1.0')
-    assert.equal(getJson.build, 4)
+    assert.equal(getJson.version, '3.0.0')
+    assert.equal(getJson.build, 5)
     assert.equal(getJson.apiBaseUrl, 'http://nas.wzszz.top:8787')
     assert.equal(getJson.updatePageUrl, 'http://nas.wzszz.top:8787/')
     assert.ok(getJson.changelog.includes('1. '))
@@ -557,8 +574,8 @@ describe('HTTP endpoints', () => {
         },
         body: JSON.stringify({
           ...current,
-          version: '2.2.0',
-          build: 5,
+          version: '3.1.0',
+          build: 6,
           updatedAt: '2026-11-29',
           icloudUrl: 'https://www.icloud.com/shortcuts/11112222333344445555666677778888',
           notes: ['支持全新快捷指令检查更新'],
@@ -574,15 +591,15 @@ describe('HTTP endpoints', () => {
       build: number
       icloudUrl: string
     }
-    assert.equal(updatedJson.version, '2.2.0')
-    assert.equal(updatedJson.build, 5)
+    assert.equal(updatedJson.version, '3.1.0')
+    assert.equal(updatedJson.build, 6)
     assert.equal(
       updatedJson.icloudUrl,
       'https://www.icloud.com/shortcuts/11112222333344445555666677778888',
     )
 
     const updatedPage = await (await app.request('http://nas.wzszz.top:8787/')).text()
-    assert.ok(updatedPage.includes('v2.2.0'))
+    assert.ok(updatedPage.includes('v3.1.0'))
     assert.ok(updatedPage.includes('11112222333344445555666677778888'))
   })
 
@@ -743,5 +760,379 @@ describe('HTTP endpoints', () => {
     assert.equal(bareJson.totalPages, 2)
     assert.equal(bareJson.hasExplicitPage, false)
     assert.equal(bareJson.fileName, '测试视频标题')
+  })
+
+  it('keeps free downloads open and enforces StripeGuard with HMAC proxy tickets & activation', async () => {
+    const baseMock = createMockFetcher()
+    let verifyCalls = 0
+    let activateCalls = 0
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'bili-dash-test-'))
+    try {
+      const dashMuxer = createNodeDashMuxer({
+        cacheDir: tempDir,
+        probeRunner: async () => true,
+        muxRunner: async (_cmd, args) => {
+          const outPath = args[args.length - 1]
+          await writeFile(outPath, 'MUXED_MP4_DATA')
+        },
+      })
+
+      const fetcher: typeof fetch = async (input, init) => {
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url
+
+        if (url === 'https://stripe.test.dev/v1/licenses/activate') {
+          activateCalls += 1
+          const body = JSON.parse(String(init?.body ?? '{}')) as {
+            productId?: string
+            licenseKey?: string
+            instanceId?: string
+          }
+          assert.equal(body.productId, 'bdownloader')
+          if (body.licenseKey === 'BILI-FULL-DEVICES') {
+            return Response.json(
+              {
+                valid: false,
+                code: 'ACTIVATION_LIMIT_REACHED',
+                message: 'Activation limit reached (3/3).',
+                activations: { used: 3, max: 3 },
+              },
+              { status: 409 },
+            )
+          }
+          return Response.json({
+            valid: true,
+            code: 'OK',
+            productId: 'bdownloader',
+            planCode: 'pro-monthly',
+            entitlements: ['4k'],
+            status: 'active',
+            mode: 'subscription',
+            email: 'vip@example.com',
+            expiresAt: null,
+            cancelAtPeriodEnd: false,
+            activations: { used: 1, max: 3 },
+          })
+        }
+
+        if (url === 'https://stripe.test.dev/v1/licenses/verify') {
+          verifyCalls += 1
+          const body = JSON.parse(String(init?.body ?? '{}')) as {
+            productId?: string
+            licenseKey?: string
+            instanceId?: string
+            requiredEntitlement?: string
+          }
+          assert.equal(body.productId, 'bdownloader')
+          assert.equal(body.requiredEntitlement, '4k')
+          if (body.licenseKey === 'BILI-VALID-0001' && body.instanceId === 'ios-dev-1') {
+            return Response.json({
+              valid: true,
+              code: 'OK',
+              productId: 'bdownloader',
+              planCode: 'pro-monthly',
+              entitlements: ['4k'],
+              status: 'active',
+              mode: 'subscription',
+              email: 'vip@example.com',
+              expiresAt: null,
+              cancelAtPeriodEnd: false,
+              activations: { used: 1, max: 3 },
+            })
+          }
+          return Response.json({
+            valid: false,
+            code: 'LICENSE_REFUNDED',
+            message: 'License has been refunded.',
+          })
+        }
+
+        if (url.startsWith('https://api.bilibili.com/x/player/wbi/playurl')) {
+          const parsed = new URL(url)
+          if (parsed.searchParams.get('qn') === '120') {
+            assert.equal(parsed.searchParams.get('fnval'), '144')
+            assert.equal(parsed.searchParams.get('fourk'), '1')
+            return Response.json({
+              code: 0,
+              data: {
+                quality: 120,
+                dash: {
+                  video: [
+                    {
+                      id: 120,
+                      codecid: 13,
+                      codecs: 'av01.0.12M.08',
+                      bandwidth: 9000000,
+                      baseUrl: 'https://dash-cdn.bilivideo.com/4k-av1.m4s',
+                    },
+                    {
+                      id: 120,
+                      codecid: 12,
+                      codecs: 'hev1.1.6.L150.90',
+                      bandwidth: 8000000,
+                      baseUrl: 'https://dash-cdn.bilivideo.com/4k-hevc.m4s',
+                    },
+                  ],
+                  audio: [
+                    {
+                      id: 30280,
+                      codecid: 0,
+                      codecs: 'mp4a.40.2',
+                      bandwidth: 192000,
+                      baseUrl: 'https://dash-cdn.bilivideo.com/audio.m4s',
+                    },
+                  ],
+                },
+              },
+            })
+          }
+        }
+
+        if (url === 'https://dash-cdn.bilivideo.com/4k-hevc.m4s') {
+          return new Response('FAKE_HEVC_VIDEO', { status: 200 })
+        }
+        if (url === 'https://dash-cdn.bilivideo.com/audio.m4s') {
+          return new Response('FAKE_AAC_AUDIO', { status: 200 })
+        }
+
+        return baseMock.fetcher(input, init)
+      }
+
+      const app = createApp({ fetcher, dashMuxer })
+      const gateEnv = {
+        STRIPE_LICENSE_URL: 'https://stripe.test.dev',
+        STRIPE_PRODUCT_ID: 'bdownloader',
+        STRIPE_DEFAULT_PLAN: 'pro-monthly',
+        STRIPE_VIP_ENTITLEMENT: '4k',
+        PROXY_SIGNING_SECRET: 'test-hmac-secret',
+      }
+
+      // Health reports capabilities accurately
+      const healthRes = await app.request('https://worker.example/api/health', {}, gateEnv)
+      const healthJson = (await healthRes.json()) as {
+        capabilities: { dash4k: boolean; stripePaywall: boolean }
+      }
+      assert.equal(healthJson.capabilities.dash4k, true)
+      assert.equal(healthJson.capabilities.stripePaywall, true)
+
+      // Free qn=80 bypasses license check completely
+      const freeRes = await app.request(
+        'https://worker.example/api/download?bilibili=BV1q3yyzUEiD&qn=80&format=json',
+        {},
+        gateEnv,
+      )
+      assert.equal(freeRes.status, 200)
+      assert.equal(((await freeRes.json()) as { ok: boolean }).ok, true)
+      assert.equal(verifyCalls, 0)
+
+      // Activation endpoint handles success and device limit reached cleanly
+      const actLimitRes = await app.request(
+        'https://worker.example/api/license/activate?strict=1',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ licenseKey: 'BILI-FULL-DEVICES', instanceId: 'ios-dev-4' }),
+        },
+        gateEnv,
+      )
+      assert.equal(actLimitRes.status, 409)
+      const actLimitJson = (await actLimitRes.json()) as { ok: boolean; code: string }
+      assert.equal(actLimitJson.ok, false)
+      assert.equal(actLimitJson.code, 'ACTIVATION_LIMIT_REACHED')
+
+      const actOkRes = await app.request(
+        'https://worker.example/api/license/activate',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            licenseKey: 'BILI-VALID-0001',
+            instanceId: 'ios-dev-1',
+            instanceName: 'iPhone 16 Pro',
+          }),
+        },
+        gateEnv,
+      )
+      assert.equal(actOkRes.status, 200)
+      assert.equal(((await actOkRes.json()) as { ok: boolean }).ok, true)
+      assert.equal(activateCalls, 2)
+
+      // VIP qn=120 without key -> structured PAYMENT_REQUIRED with Stripe checkoutUrl
+      const unpaidRes = await app.request(
+        'https://worker.example/api/download?bilibili=BV1q3yyzUEiD&qn=120&format=json',
+        {},
+        gateEnv,
+      )
+      assert.equal(unpaidRes.status, 200)
+      const unpaidJson = (await unpaidRes.json()) as {
+        ok: boolean
+        status: number
+        code: string
+        checkoutUrl: string
+        directCheckoutUrl: string
+        portalUrl: string
+      }
+      assert.equal(unpaidJson.ok, false)
+      assert.equal(unpaidJson.status, 402)
+      assert.equal(unpaidJson.code, 'PAYMENT_REQUIRED')
+      assert.equal(unpaidJson.checkoutUrl, 'https://stripe.test.dev/p/bdownloader')
+      assert.equal(
+        unpaidJson.directCheckoutUrl,
+        'https://stripe.test.dev/v1/checkout/bdownloader/pro-monthly',
+      )
+      assert.equal(unpaidJson.portalUrl, 'https://stripe.test.dev/p/bdownloader/portal')
+
+      // VIP qn=120 with refunded key -> LICENSE_REFUNDED
+      const refundedRes = await app.request(
+        'https://worker.example/api/download?bilibili=BV1q3yyzUEiD&qn=120&format=json&license_key=BILI-REFUNDED',
+        {},
+        gateEnv,
+      )
+      const refundedJson = (await refundedRes.json()) as { ok: boolean; code: string }
+      assert.equal(refundedJson.ok, false)
+      assert.equal(refundedJson.code, 'LICENSE_REFUNDED')
+      assert.equal(verifyCalls, 1)
+
+      // VIP qn=120 with valid key + deviceId -> issues HMAC signed proxyUrl without exposing licenseKey
+      const paidRes = await app.request(
+        'https://worker.example/api/download',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            bilibili: 'BV1q3yyzUEiD',
+            qn: '120',
+            licenseKey: 'BILI-VALID-0001',
+            instanceId: 'ios-dev-1',
+          }),
+        },
+        gateEnv,
+      )
+      const paidJson = (await paidRes.json()) as {
+        ok: boolean
+        quality: number
+        qualityLabel: string
+        proxyUrl: string
+      }
+      assert.equal(paidJson.ok, true)
+      assert.equal(paidJson.quality, 120)
+      assert.equal(paidJson.qualityLabel, '4K')
+      assert.equal(paidJson.proxyUrl.includes('BILI-VALID-0001'), false)
+      assert.ok(paidJson.proxyUrl.includes('sig='))
+      assert.equal(verifyCalls, 2)
+
+      // Calling signed proxyUrl serves muxed 4K MP4 and supports Range 206 without calling Stripe again
+      const proxyRes = await app.request(paidJson.proxyUrl, {}, gateEnv)
+      assert.equal(proxyRes.status, 200)
+      assert.equal(await proxyRes.text(), 'MUXED_MP4_DATA')
+      assert.equal(verifyCalls, 2)
+
+      const rangeRes = await app.request(
+        paidJson.proxyUrl,
+        { headers: { Range: 'bytes=0-4' } },
+        gateEnv,
+      )
+      assert.equal(rangeRes.status, 206)
+      assert.equal(rangeRes.headers.get('content-range'), 'bytes 0-4/14')
+      assert.equal(await rangeRes.text(), 'MUXED')
+
+      // Tampering qn on signed proxyUrl fails HMAC verification -> HTTP 402
+      const tamperedUrl = new URL(paidJson.proxyUrl)
+      tamperedUrl.searchParams.set('qn', '116')
+      const tamperedRes = await app.request(tamperedUrl.toString(), {}, gateEnv)
+      assert.equal(tamperedRes.status, 402)
+
+      // Direct proxy without key or ticket for qn=112 -> HTTP 402
+      const directProxy = await app.request(
+        'https://worker.example/api/proxy?bilibili=BV1q3yyzUEiD&qn=112',
+        {},
+        gateEnv,
+      )
+      assert.equal(directProxy.status, 402)
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects 4K DASH with 501 when ffmpeg/dashMuxer is unavailable and tests DASH/StripeGuard helpers', async () => {
+    const baseMock = createMockFetcher()
+    const workersApp = createApp({ fetcher: baseMock.fetcher })
+    const res = await workersApp.request(
+      'https://worker.example/api/download?bilibili=BV1q3yyzUEiD&qn=120&format=json',
+    )
+    assert.equal(res.status, 200)
+    const json = (await res.json()) as { ok: boolean; status: number; error: string }
+    assert.equal(json.ok, false)
+    assert.equal(json.status, 501)
+    assert.match(json.error, /ffmpeg/)
+
+    // selectBestDashTracks prefers HEVC over AV1 for 4K and AVC over AV1 for 1080P60
+    const selected4k = selectBestDashTracks(
+      {
+        video: [
+          { id: 120, codecid: 13, bandwidth: 9999, baseUrl: 'https://cdn.bilivideo.com/av1.m4s' },
+          { id: 120, codecid: 12, bandwidth: 8888, baseUrl: 'https://cdn.bilivideo.com/hevc.m4s' },
+        ],
+        audio: [
+          { id: 30216, codecid: 0, bandwidth: 64000, baseUrl: 'https://cdn.bilivideo.com/a64.m4s' },
+          { id: 30280, codecid: 0, bandwidth: 192000, baseUrl: 'https://cdn.bilivideo.com/a192.m4s' },
+        ],
+      },
+      '120',
+    )
+    assert.equal(selected4k.video.codecid, 12)
+    assert.equal(selected4k.audio?.id, 30280)
+
+    const selected1080p60 = selectBestDashTracks(
+      {
+        video: [
+          { id: 116, codecid: 12, bandwidth: 5000, baseUrl: 'https://cdn.bilivideo.com/hevc60.m4s' },
+          { id: 116, codecid: 7, bandwidth: 6000, baseUrl: 'https://cdn.bilivideo.com/avc60.m4s' },
+        ],
+        audio: [],
+      },
+      '116',
+    )
+    assert.equal(selected1080p60.video.codecid, 7)
+
+    // parseByteRange edge cases
+    assert.deepEqual(parseByteRange(null, 100), { kind: 'full' })
+    assert.deepEqual(parseByteRange('bytes=0-9', 100), { kind: 'partial', start: 0, end: 9 })
+    assert.deepEqual(parseByteRange('bytes=-10', 100), { kind: 'partial', start: 90, end: 99 })
+    assert.deepEqual(parseByteRange('bytes=100-110', 100), { kind: 'unsatisfiable' })
+
+    // Reusable createStripeEntitlementMiddleware works standalone in any Hono app
+    const miniApp = new Hono()
+    const client = createStripeLicenseClient(
+      { baseUrl: 'https://stripe.test.dev', productId: 'generic-app' },
+      {
+        fetcher: async () =>
+          Response.json({
+            valid: false,
+            code: 'LICENSE_NOT_FOUND',
+            message: 'License key not found.',
+          }),
+      },
+    )
+    miniApp.use(
+      '/pro/*',
+      createStripeEntitlementMiddleware({
+        getClient: () => client,
+        requiredEntitlement: () => 'pro',
+      }),
+    )
+    miniApp.get('/pro/data', (c) => c.json({ ok: true }))
+    const miniRes = await miniApp.request('/pro/data', {
+      headers: { 'X-License-Key': 'APP-BAD-KEY' },
+    })
+    assert.equal(miniRes.status, 402)
+    const miniJson = (await miniRes.json()) as { code: string; checkoutUrl: string }
+    assert.equal(miniJson.code, 'LICENSE_NOT_FOUND')
+    assert.equal(miniJson.checkoutUrl, 'https://stripe.test.dev/p/generic-app')
   })
 })

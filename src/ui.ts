@@ -57,6 +57,9 @@ export function renderShortcutPage(
     origin: string
     editable: boolean
     requiresApiToken: boolean
+    stripePaywall?: boolean
+    checkoutUrl?: string
+    dash4k?: boolean
   }
 ): string {
   const safeName = escapeHtml(config.name)
@@ -453,12 +456,16 @@ export function renderShortcutPage(
       <textarea id="testInput" placeholder="粘贴 B 站视频链接、b23.tv 短链、App 分享文案或 BV 号（例如 https://www.bilibili.com/video/BV1q3yyzUEiD/）"></textarea>
       <div class="field-row">
         <select id="testQn">
-          <option value="80">自动最高 · 免会员 (1080P/720P)</option>
-          <option value="64">720P 高清 · 免登录 (64)</option>
+          <option value="80">自动最高 · 免费 (1080P/720P)</option>
+          <option value="64">720P 高清 · 免费 (64)</option>
           <option value="32">480P 清晰 · 省流 (32)</option>
+          <option value="112">1080P+ 高码率 · 会员 (112)</option>
+          <option value="116">1080P60 高帧率 · 会员 (116)</option>
+          <option value="120">4K 超清 · 会员 (120)${options.dash4k === false ? ' [当前节点未启用 ffmpeg]' : ''}</option>
         </select>
         <input class="input" id="testPage" type="number" min="1" placeholder="分P">
       </div>
+      <input class="input" id="testLicenseKey" type="text" placeholder="会员 License Key（1080P+ / 1080P60 / 4K 需要，可留空）" style="${options.stripePaywall ? '' : 'display:none'}">
       <input class="input" id="testToken" type="password" placeholder="API_TOKEN（未配置可留空）" style="${options.requiresApiToken ? '' : 'display:none'}">
       <div class="actions">
         <button type="button" class="btn btn-secondary" id="btnResolve">解析代理链接</button>
@@ -541,7 +548,18 @@ export function renderShortcutPage(
     });
   });
 
-  function buildDownloadUrl(raw){
+  var licInput = document.getElementById('testLicenseKey');
+  try {
+    var savedLic = localStorage.getItem('bdownloader_license_key');
+    if (savedLic && licInput) licInput.value = savedLic;
+  } catch (_) {}
+  if (licInput) {
+    licInput.addEventListener('input', function(){
+      try { localStorage.setItem('bdownloader_license_key', licInput.value.trim()); } catch (_) {}
+    });
+  }
+
+  function buildDownloadUrl(raw, formatJson){
     var input = document.getElementById('testInput').value.trim();
     if(!input) throw new Error('请先输入 B 站视频链接、分享文案或 BV 号');
     var url = new URL('/api/download', window.location.origin);
@@ -551,7 +569,10 @@ export function renderShortcutPage(
     if(page) url.searchParams.set('p', page);
     var token = document.getElementById('testToken').value.trim();
     if(token) url.searchParams.set('token', token);
+    var lic = licInput ? licInput.value.trim() : '';
+    if(lic) url.searchParams.set('license_key', lic);
     if(raw) url.searchParams.set('raw', 'file');
+    if(formatJson) url.searchParams.set('format', 'json');
     return url.toString();
   }
 
@@ -559,30 +580,60 @@ export function renderShortcutPage(
   var resultBox = document.getElementById('proxyResultBox');
   var resultCode = document.getElementById('proxyResultCode');
 
+  function showCheckoutHint(msg, checkoutUrl){
+    statusEl.classList.add('err');
+    statusEl.textContent = msg + ' ';
+    if(checkoutUrl && /^https?:\/\//i.test(checkoutUrl)){
+      var a = document.createElement('a');
+      a.href = checkoutUrl;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.className = 'link';
+      a.textContent = '前往 Stripe 开通会员 →';
+      statusEl.appendChild(a);
+    }
+  }
+
   document.getElementById('btnResolve').addEventListener('click', async function(){
     statusEl.classList.remove('err');
     resultBox.style.display = 'none';
     try{
-      var url = buildDownloadUrl(false);
+      var url = buildDownloadUrl(false, true);
       statusEl.textContent = '正在解析视频地址...';
       var res = await fetch(url);
-      var text = await res.text();
-      if(!res.ok) throw new Error(text || ('HTTP ' + res.status));
-      resultCode.textContent = text;
+      var data = await res.json();
+      if(!res.ok || !data.ok){
+        if(data && data.checkoutUrl){
+          showCheckoutHint(data.error || '需要会员授权', data.checkoutUrl);
+          return;
+        }
+        throw new Error((data && data.error) || ('HTTP ' + res.status));
+      }
+      resultCode.textContent = data.proxyUrl;
       resultBox.style.display = 'flex';
-      statusEl.textContent = '解析成功，可直接复制或在浏览器中打开下载。';
+      statusEl.textContent = '解析成功：' + (data.title || '') + (data.qualityLabel ? '（' + data.qualityLabel + '）' : '');
     } catch(err){
       statusEl.classList.add('err');
       statusEl.textContent = err.message || String(err);
     }
   });
 
-  document.getElementById('btnDirectDl').addEventListener('click', function(){
+  document.getElementById('btnDirectDl').addEventListener('click', async function(){
     statusEl.classList.remove('err');
     try{
-      var url = buildDownloadUrl(true);
-      statusEl.textContent = '已触发浏览器下载，若响应较慢请稍候几秒...';
-      window.location.href = url;
+      var url = buildDownloadUrl(false, true);
+      statusEl.textContent = '正在准备下载...';
+      var res = await fetch(url);
+      var data = await res.json();
+      if(!res.ok || !data.ok){
+        if(data && data.checkoutUrl){
+          showCheckoutHint(data.error || '需要会员授权', data.checkoutUrl);
+          return;
+        }
+        throw new Error((data && data.error) || ('HTTP ' + res.status));
+      }
+      statusEl.textContent = '已触发下载：' + (data.title || '') + (data.qualityLabel ? '（' + data.qualityLabel + '）' : '') + '，若视频较大请稍候...';
+      window.location.href = data.proxyUrl;
     } catch(err){
       statusEl.classList.add('err');
       statusEl.textContent = err.message || String(err);

@@ -6,6 +6,7 @@ import {
 } from 'node:fs'
 import { resolve } from 'node:path'
 import { serve } from '@hono/node-server'
+import { createNodeDashMuxer } from '../src/dash-muxer.ts'
 import { createApp } from '../src/index.ts'
 import {
   DEFAULT_SHORTCUT_CONFIG,
@@ -46,10 +47,13 @@ const shortcutStore: ShortcutStore = {
   },
 }
 
-const app = createApp({ shortcutStore })
+const localEnv = loadLocalEnv()
+const dashMuxer = createNodeDashMuxer({
+  ffmpegPath: localEnv.FFMPEG_PATH,
+})
+const app = createApp({ shortcutStore, dashMuxer })
 const port = Number(process.env.PORT ?? '8787')
 const hostname = process.env.HOST ?? '0.0.0.0'
-const localEnv = loadLocalEnv()
 
 serve(
   {

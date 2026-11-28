@@ -11,6 +11,7 @@
 .idea/shelf
 deno.lock
 dist/
+.codegraph/
 
 # deps
 node_modules/
