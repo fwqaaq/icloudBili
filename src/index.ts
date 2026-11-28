@@ -45,6 +45,29 @@ function sanitizeFilename(name: string): string {
   return cleaned.slice(0, 80) || 'bilibili-video'
 }
 
+function formatQualityLabel(quality: number): string {
+  switch (quality) {
+    case 120:
+      return '4K'
+    case 116:
+      return '1080P60'
+    case 112:
+      return '1080P+'
+    case 80:
+      return '1080P'
+    case 74:
+      return '720P60'
+    case 64:
+      return '720P'
+    case 32:
+      return '480P'
+    case 16:
+      return '360P'
+    default:
+      return quality > 0 ? `${quality}P` : ''
+  }
+}
+
 function buildContentDisposition(
   title: string,
   bvid: string,
@@ -284,8 +307,8 @@ export function createApp(deps?: {
       name: 'bdownloader',
       status: 'ok',
       endpoints: [
-        '/api/download?bilibili=<url|share_text|bvid>&qn=112&p=1[&raw=file]',
-        '/api/proxy?bilibili=<url|share_text|bvid>&qn=112&p=1[&inline=1]',
+        '/api/download?bilibili=<url|share_text|bvid>&qn=80&p=1[&raw=file]',
+        '/api/proxy?bilibili=<url|share_text|bvid>&qn=80&p=1[&inline=1]',
         '/api/getreal?bilibili=<url|share_text|bvid>',
         '/api/shortcut',
       ],
@@ -365,12 +388,20 @@ export function createApp(deps?: {
       proxyUrl.searchParams.set('token', configuredToken)
     }
 
+    const suffix = info.page > 1 ? `_p${info.page}` : ''
     return {
       proxyUrl: proxyUrl.toString(),
       canonicalUrl: target.canonicalUrl,
       bvid: info.bvid || `av${info.aid}`,
+      title: info.title,
+      part: info.part,
+      fileName: `${sanitizeFilename(info.title)}${suffix}`,
       qn: info.qn,
+      quality: info.quality,
+      qualityLabel: formatQualityLabel(info.quality),
       page: info.page,
+      totalPages: info.totalPages,
+      hasExplicitPage: target.hasExplicitPage,
     }
   }
 

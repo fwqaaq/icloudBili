@@ -17,6 +17,7 @@ export type ShortcutConfig = {
   updatedAt: string
   subtitle: string
   icloudUrl: string
+  apiBaseUrl?: string
   highlights: ShortcutHighlight[]
   notes: string[]
   helpGuideUrl: string
@@ -33,40 +34,42 @@ export type ShortcutEnvOverrides = {
   SHORTCUT_BUILD?: string
   SHORTCUT_UPDATED_AT?: string
   SHORTCUT_ICLOUD_URL?: string
+  SHORTCUT_API_BASE_URL?: string
 }
 
 export const DEFAULT_SHORTCUT_CONFIG: ShortcutConfig = {
   name: 'bilibili 视频下载',
   badgePrefix: '新版本',
-  version: '2.0.0',
-  build: 2,
-  updatedAt: '2026-11-27',
-  subtitle: '分享链接一键解析，服务端代理绕过防盗链直存相册',
+  version: '2.1.0',
+  build: 4,
+  updatedAt: '2026-11-28',
+  subtitle: '分享链接一键解析，免会员多清晰度直下，支持相册与文件保存',
   icloudUrl: 'https://www.icloud.com/shortcuts/0069853090354b429da8677b1681ec39',
+  apiBaseUrl: '',
   highlights: [
     {
-      title: '代理防盗链',
-      subtitle: '免 Referer 直下',
+      title: '免会员清晰度',
+      subtitle: '1080P / 720P / 480P',
       badge: 'NEW',
       tone: 'pink',
     },
     {
-      title: '全格式解析',
-      subtitle: '分享文案 / av / 分P',
+      title: '多 P 与双保存',
+      subtitle: '选集 · 相册 / 文件',
       badge: 'NEW',
       tone: 'blue',
     },
     {
-      title: 'NAS 加速',
-      subtitle: '稳定直连不拦截',
+      title: '动态接口同步',
+      subtitle: '标题命名 · 代理防盗链',
       badge: '',
       tone: 'amber',
     },
   ],
   notes: [
-    '新增服务端 /api/proxy 流式代理，自动附带 Referer 绕过 403 限制',
-    '支持 B 站 App 分享文案提取、b23.tv 短链保留分 P 与 av 号解析',
-    '支持 Range 断点续传与多 CDN 节点自动切换，适配 iOS 快捷指令保存',
+    '新增免会员清晰度选择菜单（自动最高 / 720P / 480P），暂不包含会员与 4K 档位',
+    '支持多 P 视频未指定分 P 时交互选集，并可选择保存到系统相册或「文件」App',
+    '下载完成后自动以视频标题重命名并提示实际清晰度，同时支持从 /api/shortcut 动态同步服务端地址',
   ],
   helpGuideUrl: '',
 }
@@ -141,6 +144,12 @@ export function validateShortcutConfig(raw: unknown): ShortcutConfig {
   }
   const icloudUrl = validateShortcutUrl(record.icloudUrl, false)
 
+  const apiBaseRaw =
+    typeof record.apiBaseUrl === 'string'
+      ? validateShortcutUrl(record.apiBaseUrl, true)
+      : ''
+  const apiBaseUrl = apiBaseRaw ? new URL(apiBaseRaw).origin : ''
+
   const helpGuideUrl =
     typeof record.helpGuideUrl === 'string'
       ? validateShortcutUrl(record.helpGuideUrl, true)
@@ -190,6 +199,7 @@ export function validateShortcutConfig(raw: unknown): ShortcutConfig {
     updatedAt,
     subtitle,
     icloudUrl,
+    apiBaseUrl,
     highlights,
     notes,
     helpGuideUrl,
@@ -235,6 +245,14 @@ export function mergeShortcutEnvOverrides(
       // Ignore invalid env override rather than breaking page load
     }
   }
+  if (env.SHORTCUT_API_BASE_URL?.trim()) {
+    try {
+      const validated = validateShortcutUrl(env.SHORTCUT_API_BASE_URL, false)
+      next.apiBaseUrl = new URL(validated).origin
+    } catch {
+      // Ignore invalid env override rather than breaking page load
+    }
+  }
   return next
 }
 
@@ -243,8 +261,12 @@ export function buildShortcutApiPayload(
   origin: string,
   editable: boolean
 ) {
+  const cleanApiBase = config.apiBaseUrl?.trim()
+    ? config.apiBaseUrl.trim().replace(/\/+$/, '')
+    : origin
   return {
     ...config,
+    apiBaseUrl: cleanApiBase,
     changelog: config.notes.map((line, idx) => `${idx + 1}. ${line}`).join('\n'),
     updatePageUrl: `${origin}/`,
     editable,

@@ -7,13 +7,15 @@
 #include 'actions/web'
 #include 'actions/sharing'
 #include 'actions/photos'
+#include 'actions/documents'
 #include 'actions/text'
 
-const currentVersion = "2.0.1"
-const currentBuild = 3
+const currentVersion = "2.1.0"
+const currentBuild = 4
 const baseUrl = "http://nas.wzszz.top:8787"
 
-// 1. 检查服务端是否有新版本
+// 1. 检查服务端版本（强制更新）并动态获取接口基地址
+@apiBase = baseUrl
 const updateRes = downloadURL("{baseUrl}/api/shortcut")
 @updateText = "{updateRes}"
 if @updateText contains "version" {
@@ -22,6 +24,12 @@ if @updateText contains "version" {
     const remoteBuildVal = getValue(updateDict, "build")
     const changelogVal = getValue(updateDict, "changelog")
     const updatePageVal = getValue(updateDict, "updatePageUrl")
+    const apiBaseVal = getValue(updateDict, "apiBaseUrl")
+
+    @remoteApiBase = "{apiBaseVal}"
+    if @remoteApiBase beginsWith "http" {
+        @apiBase = @remoteApiBase
+    }
 
     @remoteVersion = "{remoteVersionVal}"
     const remoteBuild = getNumbers(remoteBuildVal)
@@ -33,18 +41,18 @@ if @updateText contains "version" {
     @updatePage = "{updatePageVal}"
     const updatePageLen = count(@updatePage, "Characters")
     if updatePageLen == 0 {
-        @updatePage = "{baseUrl}/"
+        @updatePage = "{@apiBase}/"
     }
 
     if remoteBuild > currentBuild {
-        confirm(@changelog, "发现新版本 v{@remoteVersion}")
+        confirm(@changelog, "发现新版本 v{@remoteVersion}（需更新）")
         openURL(@updatePage)
         stop()
     } else {
         const remoteVerLen = count(@remoteVersion, "Characters")
         if remoteVerLen > 0 {
             if @remoteVersion != currentVersion {
-                confirm(@changelog, "发现新版本 v{@remoteVersion}")
+                confirm(@changelog, "发现新版本 v{@remoteVersion}（需更新）")
                 openURL(@updatePage)
                 stop()
             }
@@ -110,7 +118,18 @@ if @found == 0 {
     stop()
 }
 
-// 3. 对保留字符完整转义后请求 JSON 接口，下载视频并保存到相册
+// 3. 选择清晰度（免会员版，不含大会员与 4K 档位）
+@selectedQn = "80"
+menu "选择清晰度（免会员版）" {
+    item "自动最高（1080P / 720P）":
+        @selectedQn = "80"
+    item "720P 高清（免登录）":
+        @selectedQn = "64"
+    item "480P 清晰（省流量）":
+        @selectedQn = "32"
+}
+
+// 4. 对保留字符完整转义后请求 JSON 接口
 const enc1 = urlEncode(@rawInput)
 const enc2 = replaceText("&", "%26", enc1)
 const enc3 = replaceText("?", "%3F", enc2)
@@ -118,23 +137,103 @@ const enc4 = replaceText("=", "%3D", enc3)
 const enc5 = replaceText("#", "%23", enc4)
 const encoded = replaceText("+", "%2B", enc5)
 
-const apiRes = downloadURL("{baseUrl}/api/download?bilibili={encoded}&format=json")
+const apiRes = downloadURL("{@apiBase}/api/download?bilibili={encoded}&qn={@selectedQn}&format=json")
 @apiText = "{apiRes}"
 @proxyUrl: text
 @errMsg: text
+@videoTitle: text
+@fileName: text
+@qualityLabel: text
+@currentPage = "1"
+@totalPages = "1"
+@explicitFlag: text
 
 if @apiText contains "proxyUrl" || @apiText contains "error" {
     const apiDict = getDictionary(apiRes)
     const proxyVal = getValue(apiDict, "proxyUrl")
     const errVal = getValue(apiDict, "error")
+    const titleVal = getValue(apiDict, "title")
+    const fileNameVal = getValue(apiDict, "fileName")
+    const qualityLabelVal = getValue(apiDict, "qualityLabel")
+    const pageVal = getValue(apiDict, "page")
+    const totalPagesVal = getValue(apiDict, "totalPages")
+    const explicitVal = getValue(apiDict, "hasExplicitPage")
+
     @proxyUrl = "{proxyVal}"
     @errMsg = "{errVal}"
+    @videoTitle = "{titleVal}"
+    @fileName = "{fileNameVal}"
+    @qualityLabel = "{qualityLabelVal}"
+    @currentPage = "{pageVal}"
+    @totalPages = "{totalPagesVal}"
+    @explicitFlag = "{explicitVal}"
 }
 
+// 5. 多 P 视频且未显式指定 ?p= 时允许交互选集
+if @proxyUrl beginsWith "http" {
+    const totalPagesNum = getNumbers(@totalPages)
+    if totalPagesNum > 1 {
+        @isExplicit = "0"
+        if @explicitFlag == "1" || @explicitFlag == "true" || @explicitFlag == "Yes" || @explicitFlag == "是" {
+            @isExplicit = "1"
+        }
+        if @isExplicit == "0" {
+            menu "该视频共 {@totalPages} 个分 P，当前第 1 P" {
+                item "下载第 1 P":
+                item "选择其他分 P":
+                    const pickedPage = prompt("请输入分 P 序号（1 ~ {@totalPages}）", "Number", "1")
+                    const pickedNum = getNumbers(pickedPage)
+                    if pickedNum >= 1 {
+                        const pageRes = downloadURL("{@apiBase}/api/download?bilibili={encoded}&qn={@selectedQn}&p={pickedNum}&format=json")
+                        @pageText = "{pageRes}"
+                        if @pageText contains "proxyUrl" || @pageText contains "error" {
+                            const pageDict = getDictionary(pageRes)
+                            const pProxyVal = getValue(pageDict, "proxyUrl")
+                            const pErrVal = getValue(pageDict, "error")
+                            const pTitleVal = getValue(pageDict, "title")
+                            const pFileNameVal = getValue(pageDict, "fileName")
+                            const pQualVal = getValue(pageDict, "qualityLabel")
+                            const pNumVal = getValue(pageDict, "page")
+
+                            @proxyUrl = "{pProxyVal}"
+                            @errMsg = "{pErrVal}"
+                            @videoTitle = "{pTitleVal}"
+                            @fileName = "{pFileNameVal}"
+                            @qualityLabel = "{pQualVal}"
+                            @currentPage = "{pNumVal}"
+                        }
+                    }
+            }
+        }
+    }
+}
+
+// 6. 下载视频、按标题重命名并选择保存到相册或文件
 if @proxyUrl beginsWith "http" {
     const video = downloadURL(@proxyUrl)
-    savePhoto(video)
-    showNotification("视频已保存到系统相册", "bilibili 视频下载")
+    const fileNameLen = count(@fileName, "Characters")
+    if fileNameLen == 0 {
+        @fileName = "bilibili-video"
+    }
+    const namedVideo = setName(video, @fileName)
+
+    menu "下载完成，选择保存位置" {
+        item "保存到系统相册":
+            savePhoto(namedVideo)
+        item "保存到「文件」App":
+            saveFilePrompt(namedVideo)
+    }
+
+    const titleLen = count(@videoTitle, "Characters")
+    if titleLen == 0 {
+        @videoTitle = "B 站视频"
+    }
+    const qualLen = count(@qualityLabel, "Characters")
+    if qualLen > 0 {
+        showNotification("《{@videoTitle}》（{@qualityLabel}）已保存", "bilibili 视频下载")
+    } else {
+        showNotification("《{@videoTitle}》已保存", "bilibili 视频下载")
+    }
 } else {
     const errLen = count(@errMsg, "Characters")
     if errLen == 0 {

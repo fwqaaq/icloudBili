@@ -39,6 +39,7 @@ export type VideoTarget = {
   idType: 'bvid' | 'aid'
   id: string
   page: number
+  hasExplicitPage: boolean
   canonicalUrl: string
 }
 
@@ -59,6 +60,7 @@ export type ResolvedPlayInfo = {
   title: string
   part: string
   page: number
+  totalPages: number
   quality: number
   qn: string
   candidates: string[]
@@ -155,10 +157,10 @@ function createApiSignal(timeoutMs = 25_000): AbortSignal | undefined {
     : undefined
 }
 
-/** Normalize requested quality code; falls back to 112 for unsupported values. */
+/** Normalize requested quality code; falls back to 80 (non-VIP max MP4) for unsupported values. */
 export function normalizeQn(qn?: string): string {
   const trimmed = (qn ?? '').trim()
-  return VALID_QN_SET.has(trimmed) ? trimmed : '112'
+  return VALID_QN_SET.has(trimmed) ? trimmed : '80'
 }
 
 export function isAllowedBilibiliHost(hostname: string): boolean {
@@ -368,12 +370,14 @@ export function parseVideoTarget(
     : resolvedInput
 
   let page = 1
+  let hasExplicitPage = false
   if (overridePage !== undefined && overridePage.trim() !== '') {
     const parsedOverride = parsePositivePage(overridePage)
     if (!parsedOverride) {
       throw new BiliError(400, '分 P 参数 p 必须是大于 0 的整数')
     }
     page = parsedOverride
+    hasExplicitPage = true
   }
 
   if (/^https?:\/\//i.test(normalizedInput)) {
@@ -386,8 +390,12 @@ export function parseVideoTarget(
     if (!isAllowedBilibiliHost(url.hostname)) {
       throw new BiliError(400, '请检查链接是否为有效的 Bilibili 链接')
     }
-    if (overridePage === undefined || overridePage.trim() === '') {
-      page = parsePositivePage(url.searchParams.get('p')) ?? 1
+    if (!hasExplicitPage) {
+      const urlPage = parsePositivePage(url.searchParams.get('p'))
+      if (urlPage !== undefined) {
+        page = urlPage
+        hasExplicitPage = true
+      }
     }
 
     const pathBv = url.pathname.match(
@@ -403,6 +411,7 @@ export function parseVideoTarget(
         idType: 'bvid',
         id: bvid,
         page,
+        hasExplicitPage,
         canonicalUrl: `https://www.bilibili.com/video/${bvid}/${page > 1 ? `?p=${page}` : ''}`,
       }
     }
@@ -416,6 +425,7 @@ export function parseVideoTarget(
         idType: 'aid',
         id: aid,
         page,
+        hasExplicitPage,
         canonicalUrl: `https://www.bilibili.com/video/av${aid}/${page > 1 ? `?p=${page}` : ''}`,
       }
     }
@@ -428,6 +438,7 @@ export function parseVideoTarget(
       idType: 'bvid',
       id: normalizedInput,
       page,
+      hasExplicitPage,
       canonicalUrl: `https://www.bilibili.com/video/${normalizedInput}/${page > 1 ? `?p=${page}` : ''}`,
     }
   }
@@ -439,6 +450,7 @@ export function parseVideoTarget(
       idType: 'aid',
       id: aid,
       page,
+      hasExplicitPage,
       canonicalUrl: `https://www.bilibili.com/video/av${aid}/${page > 1 ? `?p=${page}` : ''}`,
     }
   }
@@ -1016,6 +1028,7 @@ export function createBilibiliService(deps?: {
       title: videoInfo.title,
       part: videoInfo.part,
       page: videoInfo.page,
+      totalPages: videoInfo.totalPages,
       quality: payload.data.quality ?? Number(qn),
       qn,
       candidates,
@@ -1045,6 +1058,7 @@ export function createBilibiliService(deps?: {
           idType: 'bvid',
           id: videoInfo.bvid,
           page: videoInfo.page,
+          hasExplicitPage: target.hasExplicitPage,
           canonicalUrl: `https://www.bilibili.com/video/${videoInfo.bvid}/${videoInfo.page > 1 ? `?p=${videoInfo.page}` : ''}`,
         }
       : target

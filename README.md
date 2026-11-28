@@ -166,6 +166,7 @@ pnpm test
 | `SHORTCUT_BUILD` | `build` | 构建序号（1 到 999,999 之间的整数） |
 | `SHORTCUT_UPDATED_AT` | `updatedAt` | 更新日期文本（最多 32 个字符） |
 | `SHORTCUT_ICLOUD_URL` | `icloudUrl` | iCloud 快捷指令安装与覆盖更新链接 |
+| `SHORTCUT_API_BASE_URL` | `apiBaseUrl` | 覆盖快捷指令运行时动态同步的服务端基地址 |
 
 </details>
 
@@ -190,26 +191,32 @@ pnpm test
 <details>
 <summary>展开查看清晰度代码（qn）与请求响应示例</summary>
 
-**清晰度参数 `qn` 对照表**（默认 `112`，传入未定义值时自动回退至 `112`）：
+**清晰度参数 `qn` 对照表**（默认 `80`，传入未定义值时自动回退至 `80`；界面与快捷指令默认仅提供免会员可下载的清晰度选项）：
 
 | `qn` 值 | 清晰度说明 | 备注 |
 | --- | --- | --- |
-| `112` | 高清 1080P+（默认） | 按当前账号与视频支持情况由上游自动匹配 |
-| `80` | 1080P 高清 | 通常需配置 `SESSION` |
+| `80` | 自动最高 · 1080P 高清（默认） | 服务端配置普通免费账号 `SESSION` 时获取 `1080P`，未登录自动降级为 `720P` |
 | `64` | 720P 高清 | 未登录状态常见最高单流清晰度 |
 | `32` | 480P 清晰 | 体积更小，适合快速下载 |
-| `74` / `116` / `120` | 720P60 / 1080P60 / 4K | 仅透传参数至上游，实际可用性取决于单流 MP4 支持情况 |
+| `74` / `112` / `116` / `120` | 720P60 / 1080P+ / 1080P60 / 4K | 服务端保留透传兼容，界面不展示；实际可用性取决于账号权益与单流支持情况 |
 
 **`GET /api/download?format=json` 或 `POST /api/download` 响应示例**：
 
 ```json
 {
   "ok": true,
-  "proxyUrl": "http://localhost:8787/api/proxy?bilibili=https%3A%2F%2Fwww.bilibili.com%2Fvideo%2FBV1q3yyzUEiD%2F&qn=112",
+  "proxyUrl": "http://localhost:8787/api/proxy?bilibili=https%3A%2F%2Fwww.bilibili.com%2Fvideo%2FBV1q3yyzUEiD%2F&qn=80",
   "canonicalUrl": "https://www.bilibili.com/video/BV1q3yyzUEiD/",
   "bvid": "BV1q3yyzUEiD",
-  "qn": "112",
-  "page": 1
+  "title": "示例视频标题",
+  "part": "P1",
+  "fileName": "示例视频标题",
+  "qn": "80",
+  "quality": 64,
+  "qualityLabel": "720P",
+  "page": 1,
+  "totalPages": 1,
+  "hasExplicitPage": false
 }
 ```
 
@@ -238,9 +245,9 @@ curl -L -o video_p2.mp4 \
 
 仓库在 [shortcuts/bilibili.cherri](shortcuts/bilibili.cherri) 提供了完整的 Apple 快捷指令源码，并已预编译签名为 [shortcuts/bilibili-downloader.shortcut](shortcuts/bilibili-downloader.shortcut)。快捷指令内置以下逻辑：
 
-1. **启动自动检查更新**：请求 `GET /api/shortcut`，同时比对 `build > currentBuild` 与 `version != currentVersion`；发现新版本时弹窗展示 `changelog` 并跳转更新引导页。
-2. **多渠道输入识别**：依次读取系统共享表单 `ShortcutInput`、剪贴板内容，或弹出输入框手动输入。
-3. **转义请求与相册保存**：完整转义 URL 保留字符后请求 `GET /api/download?bilibili=...&format=json`，获取 `proxyUrl` 后下载视频并保存至系统相册。
+1. **启动强制检查更新与动态地址同步**：请求 `GET /api/shortcut`，同时比对 `build > currentBuild` 与 `version != currentVersion`，并读取返回的 `apiBaseUrl`；若发现服务端版本更高则弹窗跳转更新引导页并停止运行。
+2. **多渠道输入识别与免会员清晰度选择**：依次读取共享表单 `ShortcutInput`、剪贴板内容或手动输入，随后弹出免会员清晰度菜单（自动最高 `1080P / 720P`、`720P`、`480P`）。
+3. **多 P 选集、标题命名与双保存位置**：遇到多 P 视频且链接未指定 `?p=` 时支持交互选集；下载后以视频标题重命名，并可选择保存至系统相册或「文件」App，同时在完成通知中展示标题与实际清晰度。
 
 修改 `shortcuts/bilibili.cherri` 中的 `currentVersion`、`currentBuild` 或 `baseUrl`（替换为自己的服务端域名）后，可通过已安装的 `cherri` CLI（Command-Line Interface，命令行工具）重新编译并签名：
 

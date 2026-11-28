@@ -48,12 +48,12 @@ describe('WBI & parameter helpers', () => {
     assert.ok(match, `expected valid 32-char hex w_rid in: ${query}`)
   })
 
-  it('normalizeQn accepts exact supported qualities without trailing spaces', () => {
+  it('normalizeQn accepts exact supported qualities and defaults to non-VIP 80', () => {
     for (const qn of ['32', '64', '74', '80', '112', '116', '120']) {
       assert.equal(normalizeQn(qn), qn)
     }
-    assert.equal(normalizeQn('999'), '112')
-    assert.equal(normalizeQn(undefined), '112')
+    assert.equal(normalizeQn('999'), '80')
+    assert.equal(normalizeQn(undefined), '80')
   })
 
   it('extractRawLinkOrId parses share copy, URLs, and bare BV/av IDs', () => {
@@ -454,6 +454,10 @@ describe('HTTP endpoints', () => {
     const html = await pageRes.text()
     assert.ok(html.includes('立即获取快捷指令'))
     assert.ok(html.includes('请点击「替换」'))
+    assert.ok(html.includes('value="80"'))
+    assert.ok(html.includes('value="64"'))
+    assert.ok(html.includes('value="32"'))
+    assert.equal(html.includes('value="112"'), false)
     assert.ok(html.includes('http://nas.wzszz.top:8787/api/shortcut'))
     assert.ok(html.includes('0069853090354b429da8677b1681ec39'))
     assert.equal(html.includes('<script>alert(1)</script>'), false)
@@ -479,13 +483,24 @@ describe('HTTP endpoints', () => {
     const getJson = (await getRes.json()) as {
       version: string
       build: number
+      apiBaseUrl: string
       updatePageUrl: string
       changelog: string
     }
-    assert.equal(getJson.version, '2.0.0')
-    assert.equal(getJson.build, 2)
+    assert.equal(getJson.version, '2.1.0')
+    assert.equal(getJson.build, 4)
+    assert.equal(getJson.apiBaseUrl, 'http://nas.wzszz.top:8787')
     assert.equal(getJson.updatePageUrl, 'http://nas.wzszz.top:8787/')
     assert.ok(getJson.changelog.includes('1. '))
+
+    const overrideGetRes = await app.request(
+      'http://nas.wzszz.top:8787/api/shortcut',
+      {},
+      { SHORTCUT_API_BASE_URL: 'https://edge.example.com/custom-path' },
+    )
+    assert.equal(overrideGetRes.status, 200)
+    const overrideJson = (await overrideGetRes.json()) as { apiBaseUrl: string }
+    assert.equal(overrideJson.apiBaseUrl, 'https://edge.example.com')
 
     // No ADMIN_TOKEN configured -> 403
     const noSecretRes = await app.request(
@@ -542,9 +557,9 @@ describe('HTTP endpoints', () => {
         },
         body: JSON.stringify({
           ...current,
-          version: '2.1.0',
-          build: 3,
-          updatedAt: '2026-11-28',
+          version: '2.2.0',
+          build: 5,
+          updatedAt: '2026-11-29',
           icloudUrl: 'https://www.icloud.com/shortcuts/11112222333344445555666677778888',
           notes: ['支持全新快捷指令检查更新'],
         }),
@@ -559,15 +574,15 @@ describe('HTTP endpoints', () => {
       build: number
       icloudUrl: string
     }
-    assert.equal(updatedJson.version, '2.1.0')
-    assert.equal(updatedJson.build, 3)
+    assert.equal(updatedJson.version, '2.2.0')
+    assert.equal(updatedJson.build, 5)
     assert.equal(
       updatedJson.icloudUrl,
       'https://www.icloud.com/shortcuts/11112222333344445555666677778888',
     )
 
     const updatedPage = await (await app.request('http://nas.wzszz.top:8787/')).text()
-    assert.ok(updatedPage.includes('v2.1.0'))
+    assert.ok(updatedPage.includes('v2.2.0'))
     assert.ok(updatedPage.includes('11112222333344445555666677778888'))
   })
 
@@ -645,11 +660,23 @@ describe('HTTP endpoints', () => {
       ok: boolean
       proxyUrl?: string
       bvid?: string
+      title?: string
+      fileName?: string
+      quality?: number
+      qualityLabel?: string
       page?: number
+      totalPages?: number
+      hasExplicitPage?: boolean
     }
     assert.equal(schemeJson.ok, true)
     assert.equal(schemeJson.bvid, 'BV1q3yyzUEiD')
+    assert.equal(schemeJson.title, '测试视频标题')
+    assert.equal(schemeJson.fileName, '测试视频标题_p2')
+    assert.equal(schemeJson.quality, 80)
+    assert.equal(schemeJson.qualityLabel, '1080P')
     assert.equal(schemeJson.page, 2)
+    assert.equal(schemeJson.totalPages, 2)
+    assert.equal(schemeJson.hasExplicitPage, true)
     assert.ok(schemeJson.proxyUrl?.startsWith('https://worker.example/api/proxy?'))
   })
 
@@ -685,11 +712,36 @@ describe('HTTP endpoints', () => {
       ok: boolean
       proxyUrl: string
       qn: string
+      qualityLabel: string
       page: number
+      totalPages: number
+      hasExplicitPage: boolean
     }
     assert.equal(postJson.ok, true)
     assert.equal(postJson.qn, '80')
+    assert.equal(postJson.qualityLabel, '1080P')
     assert.equal(postJson.page, 2)
+    assert.equal(postJson.totalPages, 2)
+    assert.equal(postJson.hasExplicitPage, true)
     assert.ok(postJson.proxyUrl.includes('/api/proxy?'))
+
+    const bareRes = await app.request(
+      'https://worker.example/api/download?bilibili=BV1q3yyzUEiD&format=json',
+    )
+    assert.equal(bareRes.status, 200)
+    const bareJson = (await bareRes.json()) as {
+      ok: boolean
+      qn: string
+      page: number
+      totalPages: number
+      hasExplicitPage: boolean
+      fileName: string
+    }
+    assert.equal(bareJson.ok, true)
+    assert.equal(bareJson.qn, '80')
+    assert.equal(bareJson.page, 1)
+    assert.equal(bareJson.totalPages, 2)
+    assert.equal(bareJson.hasExplicitPage, false)
+    assert.equal(bareJson.fileName, '测试视频标题')
   })
 })

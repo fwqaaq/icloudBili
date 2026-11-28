@@ -1,35 +1,36 @@
 {
   "name": "bilibili 视频下载",
   "badgePrefix": "新版本",
-  "version": "2.0.1",
-  "build": 3,
-  "updatedAt": "2026-11-27",
-  "subtitle": "分享链接一键解析，服务端代理绕过防盗链直存相册",
+  "version": "2.1.0",
+  "build": 4,
+  "updatedAt": "2026-11-28",
+  "subtitle": "分享链接一键解析，免会员多清晰度直下，支持相册与文件保存",
   "icloudUrl": "https://www.icloud.com/shortcuts/0069853090354b429da8677b1681ec39",
+  "apiBaseUrl": "",
   "highlights": [
     {
-      "title": "代理防盗链",
-      "subtitle": "免 Referer 直下",
+      "title": "免会员清晰度",
+      "subtitle": "1080P / 720P / 480P",
       "badge": "NEW",
       "tone": "pink"
     },
     {
-      "title": "全格式解析",
-      "subtitle": "分享文案 / av / 分P",
+      "title": "多 P 与双保存",
+      "subtitle": "选集 · 相册 / 文件",
       "badge": "NEW",
       "tone": "blue"
     },
     {
-      "title": "NAS 加速",
-      "subtitle": "稳定直连不拦截",
+      "title": "动态接口同步",
+      "subtitle": "标题命名 · 代理防盗链",
       "badge": "",
       "tone": "amber"
     }
   ],
   "notes": [
-    "修复 iPhone B 站 App 系统分享、剪贴板 b23.tv 短链解析失败及报错正文丢失问题",
-    "新增快捷指令专用 ?format=json 响应模式，精准展示失败原因与提取链接",
-    "兼容移动端 .html 路径、HTML 跳转页与多种输入格式"
+    "新增免会员清晰度选择菜单（自动最高 / 720P / 480P），暂不包含会员与 4K 档位",
+    "支持多 P 视频未指定分 P 时交互选集，并可选择保存到系统相册或「文件」App",
+    "下载完成后自动以视频标题重命名并提示实际清晰度，同时支持从 /api/shortcut 动态同步服务端地址"
   ],
   "helpGuideUrl": ""
 }

@@ -453,10 +453,9 @@ export function renderShortcutPage(
       <textarea id="testInput" placeholder="粘贴 B 站视频链接、b23.tv 短链、App 分享文案或 BV 号（例如 https://www.bilibili.com/video/BV1q3yyzUEiD/）"></textarea>
       <div class="field-row">
         <select id="testQn">
-          <option value="112">默认最高画质 (112)</option>
-          <option value="80">1080P 高清 (80)</option>
-          <option value="64">720P 高清 (64)</option>
-          <option value="32">480P 清晰 (32)</option>
+          <option value="80">自动最高 · 免会员 (1080P/720P)</option>
+          <option value="64">720P 高清 · 免登录 (64)</option>
+          <option value="32">480P 清晰 · 省流 (32)</option>
         </select>
         <input class="input" id="testPage" type="number" min="1" placeholder="分P">
       </div>
@@ -654,6 +653,7 @@ export function renderShortcutPage(
       updatedAt: form.elements.updatedAt.value.trim(),
       subtitle: form.elements.subtitle.value.trim(),
       icloudUrl: form.elements.icloudUrl.value.trim(),
+      apiBaseUrl: cfg.apiBaseUrl || '',
       highlights: highlights,
       notes: form.elements.notes.value.split(/\\r?\\n/).map(function(x){ return x.trim(); }).filter(Boolean),
       helpGuideUrl: cfg.helpGuideUrl || ''

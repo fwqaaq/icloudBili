@@ -8,6 +8,7 @@ export const RUNTIME_ENV_KEYS = [
   'SHORTCUT_BUILD',
   'SHORTCUT_UPDATED_AT',
   'SHORTCUT_ICLOUD_URL',
+  'SHORTCUT_API_BASE_URL',
 ] as const
 
 /** Parse simple KEY=VALUE lines from .dev.vars or .env files. */
