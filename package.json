@@ -8,6 +8,7 @@
     "dev:node": "node scripts/serve-node.ts",
     "dev:deno": "deno run -A scripts/serve-deno.ts",
     "deploy": "wrangler deploy",
+    "deploy:server": "bash scripts/deploy-server.sh",
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.ts",
     "shortcut:build": "cherri shortcuts/bilibili.cherri -s=anyone -o=shortcuts/bilibili-downloader.shortcut"

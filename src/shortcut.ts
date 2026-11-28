@@ -44,7 +44,7 @@ export const DEFAULT_SHORTCUT_CONFIG: ShortcutConfig = {
   build: 4,
   updatedAt: '2026-11-28',
   subtitle: '分享链接一键解析，免会员多清晰度直下，支持相册与文件保存',
-  icloudUrl: 'https://www.icloud.com/shortcuts/0069853090354b429da8677b1681ec39',
+  icloudUrl: 'https://www.icloud.com/shortcuts/d090f8e53b1540749c79837f99115a5c',
   apiBaseUrl: '',
   highlights: [
     {

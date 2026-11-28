@@ -459,7 +459,7 @@ describe('HTTP endpoints', () => {
     assert.ok(html.includes('value="32"'))
     assert.equal(html.includes('value="112"'), false)
     assert.ok(html.includes('http://nas.wzszz.top:8787/api/shortcut'))
-    assert.ok(html.includes('0069853090354b429da8677b1681ec39'))
+    assert.ok(html.includes('d090f8e53b1540749c79837f99115a5c'))
     assert.equal(html.includes('<script>alert(1)</script>'), false)
 
     const healthRes = await app.request('http://nas.wzszz.top:8787/api/health')

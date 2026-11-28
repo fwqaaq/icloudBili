@@ -19,6 +19,8 @@ node_modules/
 .env
 .env.production
 .dev.vars
+.deploy.env
+.deploy.*.env
 
 # logs
 logs/

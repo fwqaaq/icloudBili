@@ -82,6 +82,15 @@ curl -sG --data-urlencode "bilibili=https://www.bilibili.com/video/BV1q3yyzUEiD/
   "http://localhost:8787/api/download"
 ```
 
+如需从本机一键通过 SSH 增量同步代码到服务器 / NAS 并重建容器，可先配置本地部署文件（已加入 `.gitignore` 不会入库）再执行部署脚本：
+
+```bash
+cp .deploy.env.example .deploy.env
+pnpm run deploy:server
+```
+
+常用参数：`--dry-run`（仅预览不改动服务器）、`--sync-env`（同步本机 `.env` 到远端）、`--keep-shortcut`（保留远端在线编辑的 `shortcut.json`）与 `--skip-check`（跳过本地测试）。
+
 ### Cloudflare Workers 部署
 
 **（1）使用 Wrangler CLI 手动部署**
