@@ -40,8 +40,8 @@ export type ShortcutEnvOverrides = {
 export const DEFAULT_SHORTCUT_CONFIG: ShortcutConfig = {
   name: 'bilibili 视频下载',
   badgePrefix: '新版本',
-  version: '3.0.0',
-  build: 5,
+  version: '3.0.1',
+  build: 6,
   updatedAt: '2026-11-28',
   subtitle: '免费畅享 1080P，NAS 会员解锁真 4K DASH 混流与 Stripe 自动激活',
   icloudUrl: 'https://www.icloud.com/shortcuts/6baca692067a48ea98766d4fc81531d3',
@@ -67,9 +67,9 @@ export const DEFAULT_SHORTCUT_CONFIG: ShortcutConfig = {
     },
   ],
   notes: [
-    '新增 NAS 端 4K 超清（120）、1080P60（116）与 1080P+（112）DASH 音视频无损混流下载',
-    '480P / 720P / 1080P 保持免会员直下；高画质接入 Stripe 会员授权与 HMAC 限时代理防盗链',
-    '支持从 Stripe 成功页通过 shortcuts:// 一键回传激活当前设备，并持久化保存授权码至本地文件',
+    '新增首页网页版 Bilibili 下载程序，共用同一 Stripe 会员授权与设备激活流程',
+    '修复含点号视频标题保存系统相册时丢失 .mp4 扩展名问题，并兼容字典空格格式的激活响应判定',
+    '保留 NAS 端 4K DASH 无损混流、1080P60/1080P+ 及 shortcuts:// 一键激活设备',
   ],
   helpGuideUrl: '',
 }

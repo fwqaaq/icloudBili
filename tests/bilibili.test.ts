@@ -504,8 +504,8 @@ describe('HTTP endpoints', () => {
       updatePageUrl: string
       changelog: string
     }
-    assert.equal(getJson.version, '3.0.0')
-    assert.equal(getJson.build, 5)
+    assert.equal(getJson.version, '3.0.1')
+    assert.equal(getJson.build, 6)
     assert.equal(getJson.apiBaseUrl, 'http://nas.wzszz.top:8787')
     assert.equal(getJson.updatePageUrl, 'http://nas.wzszz.top:8787/')
     assert.ok(getJson.changelog.includes('1. '))
@@ -1134,5 +1134,92 @@ describe('HTTP endpoints', () => {
     const miniJson = (await miniRes.json()) as { code: string; checkoutUrl: string }
     assert.equal(miniJson.code, 'LICENSE_NOT_FOUND')
     assert.equal(miniJson.checkoutUrl, 'https://stripe.test.dev/p/generic-app')
+  })
+
+  it('renders Web downloader workbench with Stripe flow, returns pages list, and rejects empty DASH stream', async () => {
+    const { fetcher } = createMockFetcher()
+    const tempDir = await mkdtemp(join(tmpdir(), 'bdownloader-empty-'))
+    try {
+      const emptyStreamMuxer = createNodeDashMuxer({
+        cacheDir: tempDir,
+        probeRunner: async () => true,
+        muxRunner: async () => {},
+      })
+      const app = createApp({ fetcher, dashMuxer: emptyStreamMuxer })
+      const gateEnv = {
+        STRIPE_LICENSE_URL: 'https://stripe.example.com',
+        STRIPE_PRODUCT_ID: 'icloud-bilibili-downloader',
+        STRIPE_VIP_ENTITLEMENT: 'pro',
+      }
+
+      const pageRes = await app.request('http://nas.wzszz.top:8787/', {}, gateEnv)
+      assert.equal(pageRes.status, 200)
+      const html = await pageRes.text()
+      assert.ok(html.includes('id="panelWeb"'))
+      assert.ok(html.includes('id="tabShortcut"'))
+      assert.ok(html.includes('id="btnActivateLic"'))
+      assert.ok(html.includes('id="btnPaywallActivate"'))
+      assert.ok(html.includes('id="previewPlayer"'))
+      assert.ok(html.includes('class="video-frame"'))
+      assert.ok(html.includes('grid-template-columns:minmax(0,1fr)'))
+      assert.ok(html.includes('max-width:100%'))
+      assert.ok(html.includes('id="pagePicker"'))
+      assert.ok(html.includes('https://stripe.example.com/p/icloud-bilibili-downloader'))
+      assert.ok(html.includes('https://stripe.example.com/p/icloud-bilibili-downloader/portal'))
+
+      const dlRes = await app.request(
+        'http://nas.wzszz.top:8787/api/download',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bilibili: 'BV1q3yyzUEiD', qn: '80' }),
+        },
+        gateEnv,
+      )
+      assert.equal(dlRes.status, 200)
+      const dlJson = (await dlRes.json()) as {
+        ok: boolean
+        pages?: Array<{ page: number; part: string }>
+      }
+      assert.equal(dlJson.ok, true)
+      assert.deepEqual(dlJson.pages, [
+        { page: 1, part: 'P1' },
+        { page: 2, part: 'P2' },
+      ])
+
+      await assert.rejects(
+        () =>
+          emptyStreamMuxer.muxAndServe(
+            {
+              videoKey: 'BV1empty',
+              cid: 1,
+              title: 'Empty Test',
+              part: 'P1',
+              page: 1,
+              totalPages: 1,
+              quality: 120,
+              qn: '120',
+              video: {
+                id: 120,
+                codecid: 12,
+                codecs: 'hev1',
+                bandwidth: 1000,
+                candidates: ['https://cdn.bilivideo.com/v.m4s'],
+              },
+              audio: null,
+            },
+            {
+              method: 'GET',
+              fetchCandidateStream: async () => new Response(new Uint8Array(0), { status: 200 }),
+            },
+          ),
+        (err: unknown) =>
+          err instanceof Error &&
+          (err as { status?: number }).status === 502 &&
+          err.message.includes('为空'),
+      )
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
   })
 })

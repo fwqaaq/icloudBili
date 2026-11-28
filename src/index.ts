@@ -464,6 +464,8 @@ export function createApp(deps?: {
       requiresApiToken: Boolean(c.env?.API_TOKEN?.trim()),
       stripePaywall: gateConfig.enabled && gateConfig.proQns.size > 0,
       checkoutUrl: gateConfig.landingUrl,
+      portalUrl: gateConfig.portalUrl,
+      productId: gateConfig.productId,
       dash4k,
     })
     return c.html(html, 200)
@@ -683,6 +685,7 @@ export function createApp(deps?: {
         qualityLabel: formatQualityLabel(info.quality),
         page: info.page,
         totalPages: info.totalPages,
+        ...(info.pages?.length ? { pages: info.pages } : {}),
         hasExplicitPage: target.hasExplicitPage,
       },
     }

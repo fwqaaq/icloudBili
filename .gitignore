@@ -34,6 +34,7 @@ lerna-debug.log*
 
 # media & misc
 *.mp4
+tmp-demo/
 .DS_Store
 
 # Cherri compiler intermediate artifacts

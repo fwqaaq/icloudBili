@@ -48,6 +48,11 @@ export type VideoTarget = {
   canonicalUrl: string
 }
 
+export type VideoPageSummary = {
+  page: number
+  part: string
+}
+
 export type VideoInfo = {
   bvid: string
   aid: number
@@ -56,6 +61,7 @@ export type VideoInfo = {
   part: string
   page: number
   totalPages: number
+  pages?: VideoPageSummary[]
 }
 
 export type DashMediaTrack = {
@@ -106,6 +112,7 @@ export type ResolvedPlayInfo = {
   part: string
   page: number
   totalPages: number
+  pages?: VideoPageSummary[]
   quality: number
   qn: string
   candidates: string[]
@@ -989,6 +996,10 @@ export function createBilibiliService(deps?: {
       part: matched.part ?? '',
       page: target.page,
       totalPages: pages.length,
+      pages: pages.slice(0, 200).map((item) => ({
+        page: item.page,
+        part: (item.part ?? '').trim() || `P${item.page}`,
+      })),
     }
   }
 
@@ -1063,6 +1074,14 @@ export function createBilibiliService(deps?: {
       part,
       page: target.page,
       totalPages: pages.length || 1,
+      ...(pages.length > 0
+        ? {
+            pages: pages.slice(0, 200).map((item) => ({
+              page: item.page,
+              part: (item.part ?? '').trim() || `P${item.page}`,
+            })),
+          }
+        : {}),
     }
   }
 
@@ -1175,16 +1194,21 @@ export function createBilibiliService(deps?: {
       )
     }
 
+    const baseResolved = {
+      bvid: videoInfo.bvid,
+      aid: videoInfo.aid,
+      cid: videoInfo.cid,
+      title: videoInfo.title,
+      part: videoInfo.part,
+      page: videoInfo.page,
+      totalPages: videoInfo.totalPages,
+      ...(videoInfo.pages?.length ? { pages: videoInfo.pages } : {}),
+    }
+
     if (useDash && payload.data.dash) {
       const selected = selectBestDashTracks(payload.data.dash, qn)
       const resolved: ResolvedPlayInfo = {
-        bvid: videoInfo.bvid,
-        aid: videoInfo.aid,
-        cid: videoInfo.cid,
-        title: videoInfo.title,
-        part: videoInfo.part,
-        page: videoInfo.page,
-        totalPages: videoInfo.totalPages,
+        ...baseResolved,
         quality: selected.quality,
         qn,
         candidates: [],
@@ -1219,13 +1243,7 @@ export function createBilibiliService(deps?: {
     }
 
     const resolved: ResolvedPlayInfo = {
-      bvid: videoInfo.bvid,
-      aid: videoInfo.aid,
-      cid: videoInfo.cid,
-      title: videoInfo.title,
-      part: videoInfo.part,
-      page: videoInfo.page,
-      totalPages: videoInfo.totalPages,
+      ...baseResolved,
       quality: payload.data.quality ?? Number(qn),
       qn,
       candidates,

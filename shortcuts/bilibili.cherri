@@ -12,8 +12,8 @@
 #include 'actions/math'
 #include 'actions/text'
 
-const currentVersion = "3.0.0"
-const currentBuild = 5
+const currentVersion = "3.0.1"
+const currentBuild = 6
 const baseUrl = "http://nas.wzszz.top:8787"
 
 // 0. 读取或生成当前设备的持久化唯一 ID（用于 Stripe 设备数控制）
@@ -56,7 +56,10 @@ if @updateText contains "version" {
     @updatePage = "{updatePageVal}"
     const updatePageLen = count(@updatePage, "Characters")
     if updatePageLen == 0 {
-        @updatePage = "{@apiBase}/"
+        @updatePage = "{@apiBase}/#shortcut"
+    }
+    if @updatePage == "{@apiBase}/" {
+        @updatePage = "{@apiBase}/#shortcut"
     }
 
     if remoteBuild > currentBuild {
@@ -101,12 +104,23 @@ if ShortcutInput {
                 "instanceName": "{@deviceName}"
             })
             @actText = "{actRes}"
-            if @actText contains "\"ok\":true" || @actText contains "\"valid\":true" {
+            @actPassed = "0"
+            if @actText contains "ok" || @actText contains "valid" {
+                const actDict = getDictionary(actRes)
+                const actOkVal = getValue(actDict, "ok")
+                const actValidVal = getValue(actDict, "valid")
+                @actOkStr = "{actOkVal}"
+                @actValidStr = "{actValidVal}"
+                if @actOkStr == "1" || @actOkStr == "true" || @actOkStr == "Yes" || @actOkStr == "是" || @actValidStr == "1" || @actValidStr == "true" || @actValidStr == "Yes" || @actValidStr == "是" {
+                    @actPassed = "1"
+                }
+            }
+            if @actPassed == "1" || @actText contains "\"ok\":true" || @actText contains "\"ok\" : true" || @actText contains "\"valid\":true" || @actText contains "\"valid\" : true" {
                 saveFile("bdownloader-license.txt", @activationKey, true)
                 showNotification("会员授权码已在本设备激活并保存", "bilibili 视频下载")
             } else {
-                const actDict = getDictionary(actRes)
-                const actErrVal = getValue(actDict, "error")
+                const actErrDict = getDictionary(actRes)
+                const actErrVal = getValue(actErrDict, "error")
                 @actErr = "{actErrVal}"
                 const actErrLen = count(@actErr, "Characters")
                 if actErrLen == 0 {
@@ -254,7 +268,18 @@ if @checkoutUrl beginsWith "http" {
                 "instanceName": "{@deviceName}"
             })
             @actRetryText = "{actRetryRes}"
-            if @actRetryText contains "\"ok\":true" || @actRetryText contains "\"valid\":true" {
+            @actRetryPassed = "0"
+            if @actRetryText contains "ok" || @actRetryText contains "valid" {
+                const actRetryDictOk = getDictionary(actRetryRes)
+                const arOkVal = getValue(actRetryDictOk, "ok")
+                const arValidVal = getValue(actRetryDictOk, "valid")
+                @arOkStr = "{arOkVal}"
+                @arValidStr = "{arValidVal}"
+                if @arOkStr == "1" || @arOkStr == "true" || @arOkStr == "Yes" || @arOkStr == "是" || @arValidStr == "1" || @arValidStr == "true" || @arValidStr == "Yes" || @arValidStr == "是" {
+                    @actRetryPassed = "1"
+                }
+            }
+            if @actRetryPassed == "1" || @actRetryText contains "\"ok\":true" || @actRetryText contains "\"ok\" : true" || @actRetryText contains "\"valid\":true" || @actRetryText contains "\"valid\" : true" {
                 @licenseKey = @newKey
                 saveFile("bdownloader-license.txt", @licenseKey, true)
                 const retryRes = jsonRequest("{@apiBase}/api/download", "POST", {
@@ -380,7 +405,11 @@ if @proxyUrl beginsWith "http" {
     if fileNameLen == 0 {
         @fileName = "bilibili-video"
     }
-    const namedVideo = setName(video, @fileName)
+    @finalFileName = "{@fileName}.mp4"
+    if @fileName endsWith ".mp4" {
+        @finalFileName = @fileName
+    }
+    const namedVideo = setName(video, @finalFileName)
 
     menu "下载完成，选择保存位置" {
         item "保存到系统相册":

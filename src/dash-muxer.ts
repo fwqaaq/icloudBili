@@ -1,9 +1,10 @@
 import { execFile, spawn } from 'node:child_process'
-import { createReadStream } from 'node:fs'
-import { mkdir, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
+import { createReadStream, createWriteStream } from 'node:fs'
+import { mkdir, readdir, rename, rm, stat, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 import { BiliError, type DashMediaTrack, type DashMuxInput, type DashMuxOutput, type DashMuxer } from './bilibili.ts'
 
@@ -62,11 +63,12 @@ async function writeResponseToFile(res: Response, destPath: string): Promise<voi
   if (!res.body) {
     throw new BiliError(502, '上游视频流响应体为空')
   }
-  const data = new Uint8Array(await res.arrayBuffer())
-  if (data.byteLength === 0) {
+  const readable = Readable.fromWeb(res.body as unknown as Parameters<typeof Readable.fromWeb>[0])
+  await pipeline(readable, createWriteStream(destPath))
+  const fileStat = await stat(destPath)
+  if (fileStat.size === 0) {
     throw new BiliError(502, '上游视频流内容为空')
   }
-  await writeFile(destPath, data)
 }
 
 export type CommandRunner = (cmd: string, args: string[]) => Promise<void>

@@ -1,12 +1,13 @@
 {
   "name": "bdownloader",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "wrangler dev --port 8787",
     "dev:node": "node scripts/serve-node.ts",
     "dev:deno": "deno run -A scripts/serve-deno.ts",
+    "smoke:local": "node scripts/smoke-local.ts",
     "deploy": "wrangler deploy",
     "deploy:server": "bash scripts/deploy-server.sh",
     "typecheck": "tsc --noEmit",
